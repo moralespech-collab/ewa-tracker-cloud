@@ -1,0 +1,87 @@
+name: Terraform - EWA Tracker Cloud
+
+# Hito 1: GitOps para la infraestructura.
+# - Pull Request contra main que toque infra/  -> terraform plan, comentado en el PR.
+# - Push a main (o sea, un PR ya mergeado)     -> terraform apply automático.
+#
+# Autenticación contra Azure vía OIDC federado (ver README > Hito 1): sin
+# secretos de larga duración, solo tres identificadores guardados como
+# GitHub Secrets (AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
+
+# id-token: write es lo que le permite a este workflow pedirle a GitHub el
+# token OIDC que luego Azure valida contra las federated credentials.
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+# Mismas variables que usaría el provider/backend de azurerm localmente
+# (ARM_CLIENT_ID, etc.), pero apuntando a la identidad de servicio en vez de
+# a tu cuenta personal, y con ARM_USE_OIDC en vez de una contraseña.
+env:
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_USE_OIDC: true
+
+jobs:
+  terraform:
+    name: Plan / Apply
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - name: Checkout del repo
+        uses: actions/checkout@v4
+
+      - name: Instalar Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: terraform init
+        run: terraform init -input=false
+
+      - name: terraform validate
+        run: terraform validate
+
+      - name: terraform plan
+        id: plan
+        run: terraform plan -input=false -no-color -out=tfplan
+        continue-on-error: true
+
+      - name: Comentar el plan en el Pull Request
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `#### Terraform Plan 📖
+            \`\`\`
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+            *Revisa este plan con calma antes de aprobar el merge — cualquier cosa marcada "forces replacement" merece una segunda mirada.*`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output,
+            });
+
+      - name: Detener si el plan falló
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+      - name: terraform apply
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: terraform apply -input=false -auto-approve tfplan
