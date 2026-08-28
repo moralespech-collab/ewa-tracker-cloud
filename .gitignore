@@ -16,6 +16,11 @@ terraform.rc
 # Keep the lock file — pin provider versions in the repo
 !.terraform.lock.hcl
 
+# Node / Azure Functions (api/)
+node_modules/
+dist/
+local.settings.json
+
 # OS / editor
 .DS_Store
 Thumbs.db
