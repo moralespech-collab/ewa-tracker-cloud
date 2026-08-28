@@ -1,0 +1,19 @@
+{
+  "name": "ewa-tracker-api",
+  "version": "1.0.0",
+  "description": "API del EWA Tracker Cloud (Azure Functions, managed functions de Static Web Apps).",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "prestart": "npm run build",
+    "start": "func start"
+  },
+  "main": "dist/src/functions/*.js",
+  "dependencies": {
+    "@azure/functions": "^4.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "typescript": "^5.5.3"
+  }
+}
