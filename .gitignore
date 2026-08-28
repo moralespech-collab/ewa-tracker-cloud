@@ -1,0 +1,22 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.auto.tfvars
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Keep the lock file — pin provider versions in the repo
+!.terraform.lock.hcl
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
