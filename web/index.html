@@ -46,6 +46,36 @@
   }
   .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 20px 80px; }
 
+  .app-shell { display: flex; align-items: flex-start; min-height: 100vh; }
+  .sidebar {
+    flex: none; width: 200px; box-sizing: border-box;
+    padding: 28px 14px; position: sticky; top: 0; height: 100vh; overflow-y: auto;
+    border-right: 1px solid var(--border);
+  }
+  .sidebar-title {
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-muted); font-weight: 700; padding: 0 10px 14px;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    font: inherit; font-size: 0.92rem; font-weight: 600; text-align: left; cursor: pointer;
+    background: none; color: var(--text-secondary); border: none; border-radius: 8px;
+    padding: 9px 10px; margin-bottom: 2px;
+  }
+  .nav-item:hover { background: var(--card-bg); color: var(--text-primary); }
+  .nav-item.active { background: var(--accent); color: #fff; }
+  .nav-item .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.5; flex: none; }
+  .main-area { flex: 1 1 auto; min-width: 0; }
+  @media (max-width: 720px) {
+    .app-shell { flex-direction: column; }
+    .sidebar {
+      width: auto; height: auto; position: static; border-right: none; border-bottom: 1px solid var(--border);
+      padding: 14px 20px; display: flex; align-items: center; gap: 4px; overflow-x: auto;
+    }
+    .sidebar-title { display: none; }
+    .nav-item { width: auto; white-space: nowrap; margin-bottom: 0; }
+  }
+
   header.hero {
     display: flex; flex-wrap: wrap; gap: 16px 32px;
     justify-content: space-between; align-items: flex-end;
@@ -137,13 +167,14 @@
   table.activity-table td { padding: 7px 10px; border-bottom: 1px solid var(--gridline); }
   table.activity-table td.num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 
-  .report-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .report-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
   .report-toolbar label { font-size: 0.82rem; color: var(--text-secondary); }
-  .report-toolbar select {
+  .report-toolbar select, .report-toolbar input[type="search"] {
     font: inherit; font-size: 0.86rem;
     background: var(--surface-1); color: var(--text-primary);
     border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
   }
+  .report-toolbar input[type="search"] { flex: 1 1 180px; min-width: 140px; }
   .report-item { padding: 16px 0; border-top: 1px solid var(--gridline); }
   .report-item:first-child { border-top: none; padding-top: 6px; }
   .report-item-header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -247,95 +278,122 @@
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="app-shell">
 
-  <header class="hero">
-    <div>
-      <h1>EWA Tracker &middot; PS4 &middot; Cuprum</h1>
-      <p class="sub">Backlog de optimizaci&oacute;n generado a partir del EarlyWatch Alert del 24-ago-2026 &mdash; SAP S/4HANA 2022, HANA DB</p>
-    </div>
-    <div class="badge-row">
-      <span class="pill">Datos en vivo &middot; Hito 4</span>
-      <span class="pill" id="last-updated-pill">EWA: 24-ago-2026</span>
-    </div>
-  </header>
+  <nav class="sidebar">
+    <div class="sidebar-title">EWA Tracker</div>
+    <button type="button" class="nav-item active" id="nav-vitrina" data-page="vitrina">
+      <span class="dot"></span> Vitrina
+    </button>
+    <button type="button" class="nav-item" id="nav-reporteo" data-page="reporteo">
+      <span class="dot"></span> Reporteo
+    </button>
+  </nav>
 
-  <div id="load-state" class="load-state">Cargando backlog&hellip; (si la base de datos estuvo inactiva, el primer request puede tardar hasta un minuto)</div>
+  <div class="main-area">
+    <div class="wrap">
 
-  <div id="app-content" style="display:none;">
-
-    <section>
-      <h2 class="section-title">Panorama</h2>
-      <div class="stat-row" id="stat-row"></div>
-    </section>
-
-    <section>
-      <div class="two-col">
+      <header class="hero">
         <div>
-          <h2 class="section-title">Por categor&iacute;a</h2>
-          <div class="bars" id="category-bars"></div>
+          <h1>EWA Tracker &middot; PS4 &middot; Cuprum</h1>
+          <p class="sub">Backlog de optimizaci&oacute;n generado a partir del EarlyWatch Alert del 24-ago-2026 &mdash; SAP S/4HANA 2022, HANA DB</p>
         </div>
-        <div>
-          <h2 class="section-title">Por prioridad</h2>
-          <div class="prio-tiles" id="prio-tiles"></div>
+        <div class="badge-row">
+          <span class="pill">Datos en vivo &middot; Hito 6</span>
+          <span class="pill" id="last-updated-pill">EWA: 24-ago-2026</span>
         </div>
-      </div>
-    </section>
+      </header>
 
-    <section>
-      <h2 class="section-title">Actividad por mes</h2>
-      <div class="chart-card">
-        <div class="chart-toolbar">
-          <button type="button" class="chart-toggle-btn" id="activity-toggle-btn">Ver como tabla</button>
-        </div>
-        <div id="activity-body">
-          <div class="chart-empty">Cargando actividad&hellip;</div>
-        </div>
-      </div>
-    </section>
+      <div id="load-state" class="load-state">Cargando backlog&hellip; (si la base de datos estuvo inactiva, el primer request puede tardar hasta un minuto)</div>
 
-    <section>
-      <h2 class="section-title">Informe mensual</h2>
-      <div class="chart-card">
-        <div class="report-toolbar">
-          <label for="report-mes">Mes:</label>
-          <select id="report-mes"></select>
-        </div>
-        <div id="report-body">
-          <div class="chart-empty">Cargando informe&hellip;</div>
-        </div>
-      </div>
-    </section>
+      <div id="app-content" style="display:none;">
 
-    <section>
-      <h2 class="section-title">Backlog completo</h2>
-      <div class="controls">
-        <input type="search" id="search-box" placeholder="Buscar por hallazgo, ID o due&ntilde;o...">
-        <select id="filter-categoria"><option value="">Categor&iacute;a: todas</option></select>
-        <select id="filter-prioridad"><option value="">Prioridad: todas</option></select>
-        <select id="filter-estado"><option value="">Estado: todos</option></select>
-      </div>
-      <div class="result-count" id="result-count"></div>
-      <table class="backlog">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Categor&iacute;a</th>
-            <th>Hallazgo</th>
-            <th>Prioridad</th>
-            <th>Estado</th>
-          </tr>
-        </thead>
-        <tbody id="table-body"></tbody>
-      </table>
-    </section>
+        <div id="page-vitrina" class="page">
 
+          <section>
+            <h2 class="section-title">Panorama</h2>
+            <div class="stat-row" id="stat-row"></div>
+          </section>
+
+          <section>
+            <div class="two-col">
+              <div>
+                <h2 class="section-title">Por categor&iacute;a</h2>
+                <div class="bars" id="category-bars"></div>
+              </div>
+              <div>
+                <h2 class="section-title">Por prioridad</h2>
+                <div class="prio-tiles" id="prio-tiles"></div>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 class="section-title">Backlog completo</h2>
+            <div class="controls">
+              <input type="search" id="search-box" placeholder="Buscar por hallazgo, ID o due&ntilde;o...">
+              <select id="filter-categoria"><option value="">Categor&iacute;a: todas</option></select>
+              <select id="filter-prioridad"><option value="">Prioridad: todas</option></select>
+              <select id="filter-estado"><option value="">Estado: todos</option></select>
+            </div>
+            <div class="result-count" id="result-count"></div>
+            <table class="backlog">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Categor&iacute;a</th>
+                  <th>Hallazgo</th>
+                  <th>Prioridad</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody id="table-body"></tbody>
+            </table>
+          </section>
+
+        </div>
+
+        <div id="page-reporteo" class="page" style="display:none;">
+
+          <section>
+            <h2 class="section-title">Actividad por mes</h2>
+            <div class="chart-card">
+              <div class="chart-toolbar">
+                <button type="button" class="chart-toggle-btn" id="activity-toggle-btn">Ver como tabla</button>
+              </div>
+              <div id="activity-body">
+                <div class="chart-empty">Cargando actividad&hellip;</div>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 class="section-title">Informe mensual</h2>
+            <div class="chart-card">
+              <div class="report-toolbar">
+                <label for="report-mes">Mes:</label>
+                <select id="report-mes"></select>
+                <label for="report-categoria">Categor&iacute;a:</label>
+                <select id="report-categoria"><option value="">Todas</option></select>
+                <input type="search" id="report-item" placeholder="Filtrar por ID de item (ej. ABAP-01)&hellip;">
+              </div>
+              <div id="report-body">
+                <div class="chart-empty">Cargando informe&hellip;</div>
+              </div>
+            </div>
+          </section>
+
+        </div>
+
+      </div>
+
+      <footer>
+        <span>Construido con Terraform + Azure Static Web Apps &middot; datos desde Azure SQL, cargados originalmente del tracker Excel de Cuprum</span>
+        <span id="build-note">Hito 6: panel de navegaci&oacute;n (Vitrina / Reporteo)</span>
+      </footer>
+
+    </div>
   </div>
-
-  <footer>
-    <span>Construido con Terraform + Azure Static Web Apps &middot; datos desde Azure SQL, cargados originalmente del tracker Excel de Cuprum</span>
-    <span id="build-note">API real (Hito 4): lectura y actualizaci&oacute;n con historial de cambios</span>
-  </footer>
 
 </div>
 
@@ -699,6 +757,21 @@
       select.appendChild(opt);
     });
     select.value = meses.includes(actual) ? actual : meses[0];
+
+    // Selector de categoría: mismo criterio que en los filtros del backlog —
+    // solo las categorías que de verdad aparecen en el informe, en el orden
+    // fijo del proyecto (CATEGORY_ORDER), preservando la selección actual.
+    const selectCat = document.getElementById('report-categoria');
+    const catActual = selectCat.value;
+    const categoriasPresentes = CATEGORY_ORDER.filter(c => ACTIVITY_DETAIL.some(d => d.categoria === c));
+    selectCat.innerHTML = '<option value="">Todas</option>';
+    categoriasPresentes.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c;
+      opt.textContent = c;
+      selectCat.appendChild(opt);
+    });
+    selectCat.value = categoriasPresentes.includes(catActual) ? catActual : '';
   }
 
   function renderInforme() {
@@ -715,12 +788,19 @@
     }
 
     const mesSeleccionado = select.value;
-    const filas = ACTIVITY_DETAIL.filter(d => d.mes === mesSeleccionado);
+    const categoriaSeleccionada = document.getElementById('report-categoria').value;
+    const itemBuscado = document.getElementById('report-item').value.trim().toLowerCase();
+
+    const filas = ACTIVITY_DETAIL.filter(d =>
+      d.mes === mesSeleccionado &&
+      (categoriaSeleccionada === '' || d.categoria === categoriaSeleccionada) &&
+      (itemBuscado === '' || d.codigo_item.toLowerCase().includes(itemBuscado))
+    );
 
     if (filas.length === 0) {
       const div = document.createElement('div');
       div.className = 'chart-empty';
-      div.textContent = 'Sin actividad en ' + formatMes(mesSeleccionado) + '.';
+      div.textContent = 'Sin actividad en ' + formatMes(mesSeleccionado) + ' con esos filtros.';
       body.appendChild(div);
       return;
     }
@@ -774,6 +854,8 @@
   }
 
   document.getElementById('report-mes').addEventListener('change', renderInforme);
+  document.getElementById('report-categoria').addEventListener('change', renderInforme);
+  document.getElementById('report-item').addEventListener('input', renderInforme);
 
   // BACKLOG se llena con GET /api/items al cargar la página. DETAIL_CACHE
   // guarda el detalle completo (evidencia, actividad propuesta, etc.) de
@@ -1082,6 +1164,20 @@
   document.getElementById('filter-categoria').addEventListener('change', render);
   document.getElementById('filter-prioridad').addEventListener('change', render);
   document.getElementById('filter-estado').addEventListener('change', render);
+
+  // ---- Navegación (panel izquierdo) ----
+  // Dos "páginas" cliente-side dentro de #app-content — nunca se recarga la
+  // página ni se vuelve a pedir datos al cambiar, solo se muestra/oculta.
+  const PAGINAS = ['vitrina', 'reporteo'];
+  function mostrarPagina(pagina) {
+    PAGINAS.forEach(p => {
+      document.getElementById('page-' + p).style.display = p === pagina ? '' : 'none';
+      document.getElementById('nav-' + p).classList.toggle('active', p === pagina);
+    });
+  }
+  PAGINAS.forEach(p => {
+    document.getElementById('nav-' + p).addEventListener('click', () => mostrarPagina(p));
+  });
 
   cargarBacklog();
   cargarActividad();
