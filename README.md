@@ -1,8 +1,22 @@
-# EWA Tracker Cloud — Hito 0: IaC del esqueleto
+# EWA Tracker Cloud
 
 Portafolio personal: gestión en la nube del backlog de EarlyWatch Alerts (EWA) de SAP,
 construido como vehículo de aprendizaje de IaC, automatización, identidad y administración
 de Azure/SAP BTP. Ver `../Roadmap EWA Tracker Cloud.cd` para el plan completo (Fase 1 y Fase 2).
+
+**Estado actual:**
+
+- ✅ **Hito 0** — esqueleto de infraestructura con Terraform, aplicado a mano desde tu máquina.
+- ✅ **Hito 1** — CI/CD con GitHub Actions: el mismo `terraform apply`, más el despliegue del
+  frontend y una API de prueba, corren automáticamente al hacer merge a `main`.
+- ✅ **Hito 2** — identidad básica: todo el sitio (vitrina + API) requiere login, solo entra
+  quien tú invites explícitamente — sin gastar un centavo del plan Free.
+- ✅ **Hito 3** — modelo de datos: las 4 tablas reales creadas en Azure SQL, con el backlog real
+  de Cuprum cargado y verificado (48 items).
+- ⏭️ Próximo: Hito 4 — CRUD + panorama general (conectar la vitrina a la base de datos real, con
+  vista de lista/tablero y detalle por item).
+
+## Hito 0 — IaC del esqueleto
 
 Este Hito 0 crea, con Terraform, el esqueleto de infraestructura de la Fase 1:
 
@@ -230,10 +244,248 @@ Después de importar, corre `terraform plan` y revísalo con cuidado antes de ap
 - Otros campos (como `min_capacity` o `auto_pause_delay_in_minutes`) sí se pueden actualizar sin
   recrear nada, así que si el plan solo muestra cambios ahí, no hay riesgo en aplicarlos.
 
+## Hito 1 — CI/CD con GitHub Actions
+
+Este scaffold del Hito 0 estaba pensado para que tú corrieras `terraform apply` a mano, con tu
+propia suscripción y tus propias credenciales. El Hito 1 mueve eso a dos workflows de GitHub
+Actions, para que la infraestructura y el código se desplieguen solos al hacer merge a `main` —
+sin que nadie tenga que ejecutar nada desde su máquina.
+
+### Autenticación: OIDC federado (sin secretos guardados)
+
+En vez de crear un Service Principal con un secreto de larga duración guardado como GitHub
+Secret (la opción más común, pero también la que más riesgo carga si se filtra), este proyecto
+usa **OIDC federado**: Azure AD confía en un token de identidad que GitHub emite automáticamente
+en cada corrida del workflow, sin que ningún secreto viva guardado en ningún lado.
+
+Piezas que se crearon una sola vez (fuera de Terraform, con Azure CLI):
+
+1. Un **App Registration / Service Principal** dedicado a este proyecto (no tu cuenta personal).
+2. **Roles RBAC acotados** para ese Service Principal — `Contributor` sobre los resource groups
+   específicos del proyecto (no sobre toda la suscripción) — y además, por la razón que se
+   explica más abajo, `Storage Blob Data Contributor` sobre el Storage Account del state.
+3. Dos **credenciales federadas** (`az ad app federated-credential create`), una por cada
+   "sujeto" que necesita confiar: una para el branch `main` (dispara el `apply`) y otra para
+   `pull_request` (dispara el `plan`).
+
+En GitHub, solo quedan como **Secrets** los identificadores (no son secretos en el sentido
+tradicional, son públicos por diseño de OIDC, pero igual conviene no hardcodearlos en el
+workflow): `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`. A eso se suman dos
+secretos que sí son sensibles de verdad: `SQL_ADMIN_PASSWORD` (la contraseña del SQL Server que
+ya existe) y `AZURE_STATIC_WEB_APPS_API_TOKEN` (el token de despliegue del Static Web App —
+equivalente a una contraseña de publicación, se obtiene con
+`terraform output -raw static_web_app_api_key`).
+
+### Workflow 1 — `terraform.yml`: infraestructura (GitOps)
+
+Dispara con cambios en `infra/**`:
+
+- **Pull request** → `terraform plan` y comenta el resultado directamente en el PR (vía
+  `actions/github-script`), para revisarlo con calma antes de aprobar el merge — el mismo hábito
+  de "revisa el plan con lupa" del Hito 0, ahora automático.
+- **Push a `main`** (o sea, cuando se mergea el PR) → `terraform apply` con el plan ya revisado.
+
+Un detalle de diseño que vale la pena entender: el paso de `plan` usa `continue-on-error: true`
+para que, aunque el plan falle, el workflow siga hasta el paso que publica el comentario en el
+PR — así siempre ves el motivo del fallo ahí, no solo un check en rojo sin contexto. Justo
+después hay un paso que revisa `steps.plan.outcome` y detiene el job con `exit 1` si falló, para
+que un plan roto nunca llegue a la etapa de `apply`.
+
+### Workflow 2 — `swa-deploy.yml`: frontend + API
+
+Dispara con cambios en `web/**` o `api/**`:
+
+- **Push a `main`** → construye y despliega el frontend y la API juntos a producción, con la
+  acción oficial `Azure/static-web-apps-deploy@v1` (`app_location: "web"`,
+  `api_location: "api"`).
+- **Pull request abierto/actualizado** → Azure crea automáticamente un **entorno de vista
+  previa** (una URL aparte, para probar los cambios antes de mergear).
+- **Pull request cerrado** → un segundo job (`close_pull_request_job`) le avisa a Azure que
+  destruya ese entorno de vista previa. Importante: este job es el que aparece en los checks del
+  PR al momento de mergear — **no** es el que despliega a producción; el despliegue real ocurre
+  en la corrida disparada por el push a `main` que el propio merge genera.
+
+La API vive en `/api` como una Azure Function (Node.js/TypeScript, modelo de programación v4):
+`host.json` fija el `routePrefix` en `"api"`, y `.funcignore` excluye el código fuente `.ts` del
+paquete final (solo se despliega lo compilado en `dist/`). Localmente se prueba con:
+
+```bash
+cd api
+npm install
+npm run build   # compila TypeScript a dist/, sin desplegar nada
+```
+
+### RBAC: por qué no basta con "Contributor"
+
+`backend.tf` usa `use_azuread_auth = true` para que el acceso al state de Terraform se controle
+con roles de Azure AD en vez de la clave del Storage Account. Eso trae una distinción importante
+de Azure que vale la pena tener clara: **`Contributor` es un rol de plano de control** (crear,
+modificar, borrar el recurso Storage Account en sí) **pero no otorga acceso al plano de datos**
+(leer o escribir los blobs que hay dentro). Para eso hace falta el rol
+`Storage Blob Data Contributor`, asignado aparte — y esto aplica por igual al Service Principal
+de CI *y* a tu propia cuenta personal cuando corres Terraform desde tu máquina, aunque seas el
+dueño de la suscripción.
+
+### Verificación (no te quedes solo con el check verde)
+
+El mismo hábito de este proyecto: un ✔️ en GitHub confirma que un *paso* corrió sin error, no
+necesariamente que el resultado es el esperado. Antes de dar un despliegue por bueno:
+
+1. Revisa el log del paso relevante (no solo el ícono), especialmente el que corre la acción de
+   despliegue.
+2. Prueba el resultado real — por ejemplo, visita `https://<tu-static-web-app>.azurestaticapps.net/api/hello`
+   y confirma que responde el JSON esperado, no solo que el workflow terminó en verde.
+
+### Troubleshooting
+
+**"AADSTS700213: No matching federated identity record found for presented assertion..." en la
+primera corrida del workflow.**
+
+A partir del 15 de julio de 2026, GitHub cambió el formato de los "subject claims" de OIDC para
+repos nuevos: ahora son **inmutables** e incluyen los IDs numéricos del owner y del repo
+(`repo:owner@ownerId/repo@repoId:ref...`), no solo los nombres como antes. Si configuraste la
+credencial federada con el formato viejo (`repo:owner/repo:ref...`), Azure AD no encuentra
+coincidencia. **Fix:** actualizar las credenciales federadas con el subject correcto —
+`az ad app federated-credential update`, incluyendo el `ownerId` y `repoId` de tu repo (los
+puedes confirmar en la respuesta de `gh api repos/<owner>/<repo>` o en el propio mensaje de
+error, que los expone).
+
+**"Error: No value for required variable - sql_admin_password" en el paso `terraform plan` de
+CI, aunque localmente funciona.**
+
+Localmente, `TF_VAR_sql_admin_password` vive como variable de entorno en tu sesión de
+PowerShell — el runner de GitHub Actions no la tiene. **Fix:** agregar la contraseña como GitHub
+Secret (`SQL_ADMIN_PASSWORD`, con el mismo valor que ya está en el SQL Server real) y mapearla en
+el workflow con `TF_VAR_sql_admin_password: ${{ secrets.SQL_ADMIN_PASSWORD }}`.
+
+**"Backend initialization required... Backend configuration block has changed" y luego
+`403 AuthorizationPermissionMismatch`, al correr Terraform en tu máquina después de este hito.**
+
+Editar `backend.tf` para agregar `use_azuread_auth = true` deja desactualizada la caché local de
+`.terraform/`. **Fix parte 1:** `terraform init -reconfigure` (seguro — solo refresca la
+configuración de conexión al backend, no mueve ni toca el state). Eso destapa el problema real:
+tu cuenta personal, igual que el Service Principal de CI, necesita el rol
+`Storage Blob Data Contributor` sobre el Storage Account del state (ver sección de RBAC arriba).
+**Fix parte 2:** asignarte ese rol con `az role assignment create`, esperar ~1 minuto a que
+propague, y reintentar.
+
+## Hito 2 — Identidad básica: login con Microsoft Entra ID
+
+Con el Hito 1 cerrado, el sitio se desplegaba solo pero seguía completamente abierto — cualquiera
+con la URL podía ver la vitrina y llamar a `/api/hello`. Este hito le pone una puerta: solo
+entra quien tú invites explícitamente.
+
+### Dos caminos, y por qué elegimos el gratuito
+
+Static Web Apps ofrece dos formas de manejar login:
+
+1. **Autenticación personalizada** — registras tu propia app en Microsoft Entra ID (con su
+   propio Client ID y secreto) y Static Web Apps valida contra ese registro específico. Es el
+   camino "de manual de empresa", más parecido a un SSO corporativo real.
+2. **Proveedores integrados** (`azureActiveDirectory` o `github`, sin registro propio) +
+   **Role management por invitación** — usas el login genérico de Microsoft o GitHub que
+   Static Web Apps ya trae, y restringes el acceso invitando explícitamente a cuentas
+   específicas con un rol personalizado.
+
+La sorpresa real de este hito: **la autenticación personalizada (opción 1) solo está disponible
+en el plan Standard** (~$9 USD/mes por app) — el plan Free, que hemos cuidado desde el Hito 0,
+no la soporta. Elegimos la opción 2 para quedarnos en $0, sin perder la protección real.
+
+Sí llegamos a crear un App Registration propio (`ewa-tracker-login`, con su Client ID y secreto
+guardados como Application Settings del Static Web App) antes de toparnos con esta limitación.
+Lo dejamos ahí sin usar — no cuesta nada tenerlo, y si algún día se sube al plan Standard, se
+reactiva sin rehacer nada.
+
+### Cómo quedó configurado (plan Free)
+
+`web/staticwebapp.config.json`:
+
+```json
+{
+  "routes": [
+    { "route": "/*", "allowedRoles": ["colaborador"] }
+  ],
+  "responseOverrides": {
+    "401": { "redirect": "/.auth/login/aad", "statusCode": 302 }
+  }
+}
+```
+
+- `"route": "/*"` protege **todo** el sitio, no solo la API — se decidió así porque el backlog
+  de EWA de Cuprum se considera información interna, no una pieza para mostrar públicamente tal
+  cual.
+- El rol es `colaborador`, no el genérico `"authenticated"` — con `"authenticated"` cualquier
+  cuenta de Microsoft del mundo entraría con solo loguearse. Con un rol propio, solo entra quien
+  aparece invitado en **Role management** (Azure Portal → el recurso → Configuración →
+  Administración de roles), con ese rol exacto asignado.
+- Un visitante sin sesión llega primero a un 401, que la regla de `responseOverrides` redirige
+  al login de Microsoft (`/.auth/login/aad`, el proveedor integrado y gratuito). Si inicia
+  sesión pero su cuenta no tiene el rol `colaborador`, Static Web Apps lo bloquea con un 403 —
+  verificado en vivo con una segunda cuenta de Microsoft sin invitar.
+
+### Troubleshooting
+
+**"The 'auth' configuration in staticwebapp.config.json is only supported on the Standard SKU.
+This Static Web App is not on the Standard SKU." al desplegar.**
+
+Pasa si el `staticwebapp.config.json` incluye un bloque `auth.identityProviders` (autenticación
+personalizada) en un Static Web App del plan Free. **Fix:** quitar el bloque `auth` por completo
+y usar en su lugar el proveedor integrado (`/.auth/login/aad`) más Role management por
+invitación, como se describe arriba — sin tocar el plan de precio.
+
+## Hito 3 — Modelo de datos
+
+Hasta aquí, los datos de la vitrina estaban escritos directo en el HTML — una foto fija, no una
+fuente de verdad real. Este hito crea el esquema real en Azure SQL y carga ahí el backlog
+verdadero de Cuprum (`Cuprum_PS4_EWA_Backlog.xlsx`) como datos semilla.
+
+### El esquema (`db/schema.sql`)
+
+Cuatro tablas, pensadas para servir tanto al MVP actual como a las gráficas de avance que
+vienen más adelante (Hito 6):
+
+- **Sistemas** — para que el tracker crezca a más de un sistema del landscape, no solo `PS4`.
+- **EWAs** — un registro por cada reporte EWA incorporado (equivalente a tu hoja "EWAs
+  procesados").
+- **Items** — el backlog en sí (equivalente a tu hoja "Backlog EWA"), con `categoria` y
+  `prioridad` restringidos por `CHECK` a los valores reales que usa el proceso, y `estado` con
+  un `CHECK` de cinco valores (`Pendiente`, `En progreso`, `Finalizado`, `Bloqueado`,
+  `Cancelado`) y default `'Pendiente'`.
+- **ActivityLog** — arranca vacía a propósito; se llena sola a partir del Hito 4, cuando exista
+  edición real de items. Una fila por cada cambio de campo da el histórico por item *y*, en el
+  momento de consulta, la materia prima para las gráficas por mes — sin tabla de resúmenes
+  aparte que haya que recalcular.
+
+El DDL se aplicó a mano, una sola vez, desde el **Query Editor del propio Portal de Azure**
+(sin instalar nada) — no es parte del pipeline de CI/CD, es una migración inicial de esquema.
+
+### La carga de datos (`db/import-seed.ts`)
+
+Un script de TypeScript (independiente de `/api` y `/web`, con su propio `package.json`) que lee
+el Excel real con la librería `xlsx` y hace `INSERT` directo contra Azure SQL con `mssql` —
+también corrido a mano, una sola vez, no en cada despliegue.
+
+**Un error real en la primera corrida:** la hoja "EWAs procesados" trae, además de la fila real
+(`EWA-01`), una fila en blanco y una fila de instrucciones con texto largo en la columna "ID
+EWA" (algo como "Agregar una fila por cada nuevo EWA que se incorpore..."). El primer filtro del
+script solo revisaba que esa columna no viniera vacía, así que coló esa fila de instrucciones
+como si fuera un EWA real — y como su texto mide más de 140 caracteres contra una columna
+`VARCHAR(20)`, el driver de SQL truena a medio insertar. **Fix:** filtro más estricto, que exige
+que "ID EWA" tenga el formato real (`EWA-01`, `EWA-02`, ...) *y* que la fila traiga un Sistema.
+Antes de reintentar, se limpiaron a mano (con `DELETE`) las filas basura que alcanzaron a
+insertarse — gracias a los `UNIQUE` del esquema, un reintento a ciegas sin limpiar habría
+fallado con un error de llave duplicada en vez de duplicar datos silenciosamente.
+
+### Verificación
+
+No basta con que el script termine sin error — se verificó contra los números reales del propio
+Excel: `SELECT categoria, prioridad, COUNT(*) ... GROUP BY categoria, prioridad` dio 48 items en
+total, con los mismos conteos por categoría y prioridad que la hoja "Resumen" del Excel (por
+ejemplo, `Basis`: 13 items, 6 Alta / 5 Media / 2 Baja — exacto).
+
 ## Después de este hito
 
-Este scaffold queda pensado para que seas tú quien ejecute `terraform apply` la primera vez —
-es tu propia suscripción y tus propias credenciales. El Hito 1 (CI/CD) mueve este mismo
-`terraform apply` a un workflow de GitHub Actions, usando un Service Principal con permisos
-acotados en vez de tu cuenta personal — y es también donde agregamos la carpeta `/api` con las
-managed functions de Static Web Apps.
+Con el Hito 3 cerrado, hay datos reales y verificados detrás de la app — pero la vitrina
+todavía no los lee; sigue mostrando el HTML estático de antes. El Hito 4 (CRUD + panorama
+general) conecta por fin la vitrina a la base de datos real, con una vista de lista/tablero
+filtrable y una vista de detalle por item.

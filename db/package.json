@@ -1,0 +1,19 @@
+{
+  "name": "ewa-tracker-db-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Herramientas de base de datos del EWA Tracker Cloud (Hito 3): no se despliega, se corre a mano una sola vez.",
+  "scripts": {
+    "import-seed": "ts-node import-seed.ts"
+  },
+  "dependencies": {
+    "mssql": "^10.0.2",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/mssql": "^9.1.5",
+    "@types/node": "^20.14.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.3"
+  }
+}
