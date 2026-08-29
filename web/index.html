@@ -471,7 +471,6 @@
         '<div class="detail-block"><h4>Actividad propuesta</h4><p>' + escapeHtml(d.actividad_propuesta) + '</p></div>' +
       '</div>' +
       '<div class="detail-meta">' +
-        '<span><strong>Dueño:</strong> ' + escapeHtml(d.dueno_seguimiento) + '</span>' +
         '<span><strong>Ejecutor:</strong> ' + escapeHtml(d.ejecutor) + '</span>' +
         '<span><strong>Aprobador:</strong> ' + escapeHtml(d.aprobador) + '</span>' +
         '<span><strong>EWA:</strong> ' + escapeHtml(d.codigo_ewa) + '</span>' +
@@ -479,6 +478,10 @@
       '<div class="edit-form">' +
         '<h4>Actualizar seguimiento</h4>' +
         '<div class="edit-grid">' +
+          '<div class="edit-field">' +
+            '<label for="responsable-' + codigo + '">Persona responsable</label>' +
+            '<input type="text" id="responsable-' + codigo + '" placeholder="Nombre de quien le da seguimiento" value="' + escapeHtml(d.dueno_seguimiento || '') + '">' +
+          '</div>' +
           '<div class="edit-field">' +
             '<label for="estado-' + codigo + '">Estado</label>' +
             '<select id="estado-' + codigo + '">' +
@@ -489,7 +492,7 @@
             '<label for="fecha-' + codigo + '">Fecha de compromiso</label>' +
             '<input type="date" id="fecha-' + codigo + '" value="' + (d.fecha_compromiso ? d.fecha_compromiso.slice(0,10) : '') + '">' +
           '</div>' +
-          '<div class="edit-field" style="grid-column: span 1;">' +
+          '<div class="edit-field" style="grid-column: 1 / -1;">' +
             '<label for="notas-' + codigo + '">Notas de seguimiento</label>' +
             '<textarea id="notas-' + codigo + '">' + escapeHtml(d.notas_seguimiento || '') + '</textarea>' +
           '</div>' +
@@ -522,6 +525,7 @@
   async function guardarCambios(codigo) {
     const btn = document.getElementById('save-' + cssEscape(codigo));
     const statusEl = document.getElementById('status-' + cssEscape(codigo));
+    const nuevoResponsable = document.getElementById('responsable-' + cssEscape(codigo)).value;
     const nuevoEstado = document.getElementById('estado-' + cssEscape(codigo)).value;
     const nuevaFecha = document.getElementById('fecha-' + cssEscape(codigo)).value;
     const nuevasNotas = document.getElementById('notas-' + cssEscape(codigo)).value;
@@ -536,6 +540,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           estado: nuevoEstado,
+          dueno_seguimiento: nuevoResponsable === '' ? null : nuevoResponsable,
           notas_seguimiento: nuevasNotas === '' ? null : nuevasNotas,
           fecha_compromiso: nuevaFecha === '' ? null : nuevaFecha,
         }),
@@ -559,6 +564,7 @@
         if (idxBacklog !== -1) {
           BACKLOG[idxBacklog] = Object.assign({}, BACKLOG[idxBacklog], {
             estado: actualizado.estado,
+            dueno_seguimiento: actualizado.dueno_seguimiento,
             fecha_compromiso: actualizado.fecha_compromiso,
           });
         }

@@ -1,10 +1,11 @@
-// PATCH /api/items/{codigo} — actualiza estado, notas de seguimiento y/o
-// fecha de compromiso de un item (los únicos campos editables desde la
-// vitrina; el resto viene del EWA original y es de solo lectura incluso
-// aquí). Actualización parcial: solo se tocan los campos que vengan en el
-// body. Cada campo que realmente cambie de valor genera su propia fila en
-// ActivityLog, con el usuario logeado (leído del header x-ms-client-principal
-// que agrega Static Web Apps una vez pasado el login de Hito 2).
+// PATCH /api/items/{codigo} — actualiza estado, dueño de seguimiento, notas
+// de seguimiento y/o fecha de compromiso de un item (los únicos campos
+// editables desde la vitrina; el resto viene del EWA original y es de solo
+// lectura incluso aquí). Actualización parcial: solo se tocan los campos que
+// vengan en el body. Cada campo que realmente cambie de valor genera su
+// propia fila en ActivityLog, con el usuario logeado (leído del header
+// x-ms-client-principal que agrega Static Web Apps una vez pasado el login
+// de Hito 2).
 
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import sql from "mssql";
@@ -13,8 +14,8 @@ import { getPool } from "../db";
 const ESTADOS_VALIDOS = ["Pendiente", "En progreso", "Finalizado", "Bloqueado", "Cancelado"];
 
 // Whitelist a propósito: nunca se arma SQL con nombres de columna que vengan
-// del body de la petición, solo con estos tres, elegidos a mano.
-const CAMPOS_EDITABLES = ["estado", "notas_seguimiento", "fecha_compromiso"] as const;
+// del body de la petición, solo con estos cuatro, elegidos a mano.
+const CAMPOS_EDITABLES = ["estado", "dueno_seguimiento", "notas_seguimiento", "fecha_compromiso"] as const;
 type CampoEditable = (typeof CAMPOS_EDITABLES)[number];
 
 function obtenerUsuario(request: HttpRequest): string {
@@ -85,7 +86,7 @@ export async function itemsUpdate(
       .request()
       .input("codigo", sql.VarChar(20), codigo)
       .query(`
-        SELECT id, estado, notas_seguimiento, fecha_compromiso
+        SELECT id, estado, dueno_seguimiento, notas_seguimiento, fecha_compromiso
         FROM Items
         WHERE codigo_item = @codigo
       `);
@@ -119,6 +120,9 @@ export async function itemsUpdate(
       if (campo === "estado") {
         setClauses.push("estado = @estado");
         updateRequest.input("estado", sql.VarChar(20), nuevoValor);
+      } else if (campo === "dueno_seguimiento") {
+        setClauses.push("dueno_seguimiento = @dueno_seguimiento");
+        updateRequest.input("dueno_seguimiento", sql.VarChar(100), nuevoValor);
       } else if (campo === "notas_seguimiento") {
         setClauses.push("notas_seguimiento = @notas_seguimiento");
         updateRequest.input("notas_seguimiento", sql.NVarChar(sql.MAX), nuevoValor);
