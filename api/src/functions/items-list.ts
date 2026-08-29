@@ -1,5 +1,7 @@
 // GET /api/items — lista de items del backlog, con filtro opcional por
 // categoria/estado/prioridad vía query params (?categoria=Basis&estado=Pendiente).
+// Incluye "sistema" (join hasta Sistemas) para que la vitrina no tenga que
+// pedir el detalle de cada item solo para saber de qué sistema es.
 //
 // authLevel "anonymous" es a propósito: la protección real de este endpoint
 // no la da Azure Functions, la da staticwebapp.config.json (Hito 2) — todo
@@ -36,13 +38,15 @@ export async function itemsList(
   const where = condiciones.length > 0 ? `WHERE ${condiciones.join(" AND ")}` : "";
 
   const resultado = await dbRequest.query(`
-    SELECT codigo_item, categoria, hallazgo, prioridad, dueno_seguimiento,
-           ejecutor, aprobador, estado, fecha_compromiso
-    FROM Items
+    SELECT i.codigo_item, i.categoria, i.hallazgo, i.prioridad, i.dueno_seguimiento,
+           i.ejecutor, i.aprobador, i.estado, i.fecha_compromiso, s.codigo AS sistema
+    FROM Items i
+    JOIN EWAs e ON e.id = i.ewa_id
+    JOIN Sistemas s ON s.id = e.sistema_id
     ${where}
     ORDER BY
-      CASE prioridad WHEN 'Alta' THEN 1 WHEN 'Media' THEN 2 WHEN 'Baja' THEN 3 END,
-      codigo_item
+      CASE i.prioridad WHEN 'Alta' THEN 1 WHEN 'Media' THEN 2 WHEN 'Baja' THEN 3 END,
+      i.codigo_item
   `);
 
   return { jsonBody: resultado.recordset };

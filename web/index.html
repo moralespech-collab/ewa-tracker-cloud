@@ -16,6 +16,8 @@
     --baseline:       #c3c2b7;
     --border:         rgba(11,11,11,0.10);
     --card-bg:        #ffffff;
+    --accent:         #2a78d6;
+    --danger:         #d03b3b;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -29,6 +31,8 @@
       --baseline:       #383835;
       --border:         rgba(255,255,255,0.10);
       --card-bg:        #232322;
+      --accent:         #3987e5;
+      --danger:         #e2554f;
     }
   }
 
@@ -115,8 +119,8 @@
     color: var(--text-muted); font-weight: 700; padding: 8px 10px;
     border-bottom: 1px solid var(--baseline);
   }
-  table.backlog tbody tr { border-bottom: 1px solid var(--gridline); cursor: pointer; }
-  table.backlog tbody tr:hover { background: var(--card-bg); }
+  table.backlog tbody tr.main-row { border-bottom: 1px solid var(--gridline); cursor: pointer; }
+  table.backlog tbody tr.main-row:hover { background: var(--card-bg); }
   table.backlog td { padding: 10px 10px; vertical-align: top; }
   td.id-cell { font-weight: 700; white-space: nowrap; }
   td.hallazgo-cell { max-width: 360px; }
@@ -141,15 +145,49 @@
     margin: 0 0 4px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;
     color: var(--text-muted); font-weight: 700;
   }
-  .detail-block p { margin: 0; font-size: 0.88rem; color: var(--text-primary); }
+  .detail-block p { margin: 0; font-size: 0.88rem; color: var(--text-primary); white-space: pre-wrap; }
   .detail-meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 14px; font-size: 0.82rem; color: var(--text-secondary); }
   .detail-meta strong { color: var(--text-primary); }
+  .detail-loading, .detail-error { font-size: 0.85rem; color: var(--text-muted); padding: 6px 0; }
+  .detail-error { color: var(--danger); }
+
+  .edit-form {
+    margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--gridline);
+  }
+  .edit-form h4 {
+    margin: 0 0 10px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--text-muted); font-weight: 700;
+  }
+  .edit-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; align-items: end; }
+  @media (max-width: 700px) { .edit-grid { grid-template-columns: 1fr; } }
+  .edit-field label {
+    display: block; font-size: 0.76rem; color: var(--text-secondary); margin-bottom: 4px;
+  }
+  .edit-field select, .edit-field input, .edit-field textarea {
+    width: 100%; font: inherit; font-size: 0.86rem;
+    background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px;
+  }
+  .edit-field textarea { resize: vertical; min-height: 56px; }
+  .edit-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+  .save-btn {
+    font: inherit; font-size: 0.86rem; font-weight: 600; cursor: pointer;
+    background: var(--accent); color: #fff; border: none; border-radius: 8px;
+    padding: 8px 16px;
+  }
+  .save-btn:disabled { opacity: 0.6; cursor: default; }
+  .save-status { font-size: 0.8rem; color: var(--text-muted); }
+  .save-status.ok { color: #0ca30c; }
+  .save-status.error { color: var(--danger); }
 
   footer {
     margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--gridline);
     font-size: 0.8rem; color: var(--text-muted); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
   }
   footer a { color: var(--text-secondary); }
+
+  .load-state { padding: 40px 0; text-align: center; color: var(--text-muted); font-size: 0.92rem; }
+  .load-state.error { color: var(--danger); }
 </style>
 </head>
 <body>
@@ -161,61 +199,66 @@
       <p class="sub">Backlog de optimizaci&oacute;n generado a partir del EarlyWatch Alert del 24-ago-2026 &mdash; SAP S/4HANA 2022, HANA DB</p>
     </div>
     <div class="badge-row">
-      <span class="pill">Vitrina est&aacute;tica &middot; Hito 0</span>
-      <span class="pill" id="last-updated-pill"></span>
+      <span class="pill">Datos en vivo &middot; Hito 4</span>
+      <span class="pill" id="last-updated-pill">EWA: 24-ago-2026</span>
     </div>
   </header>
 
-  <section>
-    <h2 class="section-title">Panorama</h2>
-    <div class="stat-row" id="stat-row"></div>
-  </section>
+  <div id="load-state" class="load-state">Cargando backlog&hellip; (si la base de datos estuvo inactiva, el primer request puede tardar hasta un minuto)</div>
 
-  <section>
-    <div class="two-col">
-      <div>
-        <h2 class="section-title">Por categor&iacute;a</h2>
-        <div class="bars" id="category-bars"></div>
-      </div>
-      <div>
-        <h2 class="section-title">Por prioridad</h2>
-        <div class="prio-tiles" id="prio-tiles"></div>
-      </div>
-    </div>
-  </section>
+  <div id="app-content" style="display:none;">
 
-  <section>
-    <h2 class="section-title">Backlog completo</h2>
-    <div class="controls">
-      <input type="search" id="search-box" placeholder="Buscar por hallazgo, ID o due&ntilde;o...">
-      <select id="filter-categoria"><option value="">Categor&iacute;a: todas</option></select>
-      <select id="filter-prioridad"><option value="">Prioridad: todas</option></select>
-      <select id="filter-estado"><option value="">Estado: todos</option></select>
-    </div>
-    <div class="result-count" id="result-count"></div>
-    <table class="backlog">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Categor&iacute;a</th>
-          <th>Hallazgo</th>
-          <th>Prioridad</th>
-          <th>Estado</th>
-        </tr>
-      </thead>
-      <tbody id="table-body"></tbody>
-    </table>
-  </section>
+    <section>
+      <h2 class="section-title">Panorama</h2>
+      <div class="stat-row" id="stat-row"></div>
+    </section>
+
+    <section>
+      <div class="two-col">
+        <div>
+          <h2 class="section-title">Por categor&iacute;a</h2>
+          <div class="bars" id="category-bars"></div>
+        </div>
+        <div>
+          <h2 class="section-title">Por prioridad</h2>
+          <div class="prio-tiles" id="prio-tiles"></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="section-title">Backlog completo</h2>
+      <div class="controls">
+        <input type="search" id="search-box" placeholder="Buscar por hallazgo, ID o due&ntilde;o...">
+        <select id="filter-categoria"><option value="">Categor&iacute;a: todas</option></select>
+        <select id="filter-prioridad"><option value="">Prioridad: todas</option></select>
+        <select id="filter-estado"><option value="">Estado: todos</option></select>
+      </div>
+      <div class="result-count" id="result-count"></div>
+      <table class="backlog">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Categor&iacute;a</th>
+            <th>Hallazgo</th>
+            <th>Prioridad</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </section>
+
+  </div>
 
   <footer>
-    <span>Construido con Terraform + Azure Static Web Apps &middot; datos desde el tracker Excel de Cuprum</span>
-    <span id="build-note">Datos est&aacute;ticos &middot; sin backend a&uacute;n (Hito 3+)</span>
+    <span>Construido con Terraform + Azure Static Web Apps &middot; datos desde Azure SQL, cargados originalmente del tracker Excel de Cuprum</span>
+    <span id="build-note">API real (Hito 4): lectura y actualizaci&oacute;n con historial de cambios</span>
   </footer>
 
 </div>
 
 <script>
-  const BACKLOG = [{"ID": "BAS-01", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Basis", "Hallazgo": "Memoria del indexserver muy cerca del limite efectivo de asignacion.", "Evidencia (EWA)": "Uso memoria indexserver 388 GB vs limite efectivo 472 GB (~82%). Memoria de tablas 244 GB de 484 GB del allocation limit global (>50%, alerta EWA).", "Actividad propuesta": "Analizar heap allocators dominantes (Column Store Dictionary/RoDict, hasta 88 GB) y las sentencias de mayor consumo; evaluar resize o reduccion de consumo antes de que escale a unloads/OOM.", "Prioridad": "Alta", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Basis (Javier)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "BAS-02", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Basis", "Hallazgo": "4 dumps de HANA por Out-Of-Memory el 19.08.2026.", "Evidencia (EWA)": "Alerta HANA #43 (uso vs limite de asignacion): 8 ocurrencias, rating 4-Alto. 4 OOM Dumps el 19.08.2026.", "Actividad propuesta": "Revisar _SYS_STATISTICS.HOST_LONG_RUNNING_STATEMENTS y los diagnosticos OOM; identificar causa raiz (Notas SAP 1999997, 1900257, 1840954).", "Prioridad": "Alta", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Basis (Javier)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "BAS-03", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Basis", "Hallazgo": "Parametros de Workload Management de HANA fuera de recomendacion.", "Evidencia (EWA)": "statement_memory_limit = 0 (recomendado entre 30 y 145); max_gc_parallelity = 16 (recomendado 32).", "Actividad propuesta": "Ajustar ambos parametros segun Notas SAP 2222250 y 1969700, validando impacto en ventana controlada antes de aplicar en productivo.", "Prioridad": "Alta", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Basis (Javier)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "BAS-04", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Basis", "Hallazgo": "Sentencias SQL de larga duracion, deadlocks y transacciones bloqueadas.", "Evidencia (EWA)": "Alerta #39: 88 sentencias de larga duracion (rating 3). Alerta #149: 2 deadlocks (rating 3). Alerta #59: 1 transaccion bloqueada (rating 3).", "Actividad propuesta": "Monitorear con Nota SAP 2445867 y cruzar con el backlog de sentencias pesadas de la categoria ABAP/Desarrollo.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Basis (Javier)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "BAS-05", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Basis", "Hallazgo": "Tablas/indices grandes senaladas para reorganizacion.", "Evidencia (EWA)": "EDID4: 33,174 MB. TST03: 21,526 MB (tabla de spool, con 21,366 MB en LOBs).", "Actividad propuesta": "Aplicar housekeeping segun Notas SAP 40088 y 1574016 (EDID4) y 48400, 130978 y 16083 (TST03).", "Prioridad": "Alta", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Basis (Javier)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "BAS-06", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Basis", "Hallazgo": "Tablas row store grandes, candidatas a limpieza periodica.", "Evidencia (EWA)": "Mayor tabla row store por disco: TST03 (21,526 MB). Le siguen APQD, FPLAYOUTT, SWNCMONI, POWL_RESULT.", "Actividad propuesta": "Ejecutar housekeeping de tablas Basis segun Nota SAP 2388483 (purga de datos obsoletos).", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Basis (Javier)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "BAS-07", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Basis", "Hallazgo": "127 errores de actualizacion (update errors) registrados.", "Evidencia (EWA)": "127 update errors detectados en el periodo analizado (SM13).", "Actividad propuesta": "Revisar periodicamente en SM13 junto con los equipos de aplicacion, segun Nota SAP 1510367.", "Prioridad": "Alta", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Basis (Javier)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "BAS-08", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Basis", "Hallazgo": "Volumen alto de ABAP dumps en el sistema productivo.", "Evidencia (EWA)": "2,083 dumps entre 18 y 25.08.2026 (pico 614 el 20.08). Mayor volumen: ITAB_LINE_NOT_FOUND (972), CALL_FUNCTION_REMOTE_ERROR (392), CONVT_NO_NUMBER (120), MESSAGE_TYPE_X (92), ASSERTION_FAILED (76), TSV_TNEW_PAGE_ALLOC_FAILED (76), TIME_OUT (65), RAISE_SHORTDUMP (45).", "Actividad propuesta": "Triage en ST22 priorizando por volumen; separar dumps estandar de dumps en desarrollos propios (Z*) y derivar estos ultimos a ABAP/Desarrollo.", "Prioridad": "Alta", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Basis (Javier)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "BAS-09", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Basis", "Hallazgo": "Herramientas de servicio (RTCCTOOL) desactualizadas - estado ROJO.", "Evidencia (EWA)": "Addon ST-A/PI 01X_731 mas de 2 niveles atras. ST-PI 740 SP34 pendiente, mas de 4 niveles atras del ultimo disponible.", "Actividad propuesta": "Actualizar via SAINT/SPAM segun Notas SAP 69455 y 539977, para asegurar la correcta entrega de futuros servicios remotos SAP.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Basis (Javier)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "BAS-10", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Basis", "Hallazgo": "Monitoreo extendido de infraestructura incompleto en Azure.", "Evidencia (EWA)": "Enhanced monitoring sin datos en hosts hec45v158609 y hec45v244138. Hardware Utilization Data faltante en el host de BD (hec45v158482).", "Actividad propuesta": "Habilitar el monitoreo extendido de Azure segun Notas SAP 2191498, 2469354 y 1309499.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Basis (Javier)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "BAS-11", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Basis", "Hallazgo": "Comunicacion interna del sistema no protegida.", "Evidencia (EWA)": "Parametro system/secure_communication = OFF en todas las instancias (recomendado ON).", "Actividad propuesta": "Activar la comunicacion interna segura segun Notas SAP 2040644, 2362078, 2624688 y 2778519. Coordinar con Seguridad.", "Prioridad": "Baja", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Basis (Javier)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "BAS-12", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Basis", "Hallazgo": "Carpeta de trace de HANA con alto volumen de archivos de diagnostico.", "Evidencia (EWA)": "160 archivos / 1,140.93 MB en la carpeta de trace (semanal).", "Actividad propuesta": "Revisar y depurar archivos de diagnostico que ya no sean necesarios.", "Prioridad": "Baja", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Basis (Javier)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "BAS-13", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Basis", "Hallazgo": "Jobs de housekeeping recomendados sin programar en EWM y TM.", "Evidencia (EWA)": "12 jobs recomendados no programados en EWM (menos del 30% del total). 7 jobs recomendados no programados en TM.", "Actividad propuesta": "Agendar los jobs faltantes segun Nota SAP 3418083 (Technical Job Repository). Coordinar con Funcional.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Basis (Javier)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ABAP-01", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "ABAP/Desarrollo", "Hallazgo": "Job de replicacion CDS/Datasphere domina el consumo de memoria y CPU en HANA.", "Evidencia (EWA)": "DHCDCR_PUSH_CDS_DELTA: 10.8% del response time total, 803,803 s de tiempo de BD. Sentencias asociadas (hash d11ff421.../a81466e9...) lideran memoria total, thread samples y CPU en hora pico: ~4.3 GB promedio por ejecucion, 2,059 ejecuciones, contra tablas CO-PA CE9GCPR_IC/H/IV/IQ.", "Actividad propuesta": "Perfilar el job de replicacion SLT/CDS hacia Datasphere (job tecnico /1DH/PUSH_CDS_DELTA); evaluar filtros, frecuencia y particionamiento de la extraccion.", "Prioridad": "Alta", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Accenture (Desarrollo)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ABAP-02", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "ABAP/Desarrollo", "Hallazgo": "Capa CDS/RAP genera la sentencia mas recurrente del reporte contra tablas FI centrales.", "Evidencia (EWA)": "CL_SADL_SQL_EXECUTOR contra ACDOCA/BSEG/BKPF: hash 7f585c2f... aparece en 4 de las 8 categorias 'top' del EWA (64,805 s elapsed, 53,306 ejecuciones).", "Actividad propuesta": "Identificar la vista CDS de origen (area BC-ESI-ESF-BSA) y revisar su modelo de seleccion / posibles indices adicionales.", "Prioridad": "Alta", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Accenture (Desarrollo)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ABAP-03", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "ABAP/Desarrollo", "Hallazgo": "Reporte de partidas abiertas FI-GL genera el mayor pico de memoria individual del sistema.", "Evidencia (EWA)": "LFAGL_ITEMS_SELECTU07: 124.9 GB de memoria en una sola ejecucion (25.7% del limite de asignacion), join BSEG/ACDOCA/BKPF.", "Actividad propuesta": "Revisar filtros y rango de seleccion del reporte de partidas abiertas; capacitar a usuarios clave sobre seleccion acotada.", "Prioridad": "Alta", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Accenture (Desarrollo)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ABAP-04", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "ABAP/Desarrollo", "Hallazgo": "Programa custom de monitoreo de produccion con consultas pesadas.", "Evidencia (EWA)": "ZRPP_MONITOR_DES_R: dos sentencias contra MATDOC_EXTRACT/MCHB con 14,438 s y 11,940 s de tiempo total respectivamente.", "Actividad propuesta": "Revisar los SELECT del programa; es desarrollo propio, por lo que es el candidato mas directo de tuning.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Accenture (Desarrollo)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ABAP-05", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "ABAP/Desarrollo", "Hallazgo": "Ejecucion de MRP con alto tiempo acumulado.", "Evidencia (EWA)": "CL_PPS4_MRP_RUN: 35,546 s de tiempo total en 8,457 ejecuciones (~4.2 s promedio por ejecucion).", "Actividad propuesta": "Revisar configuracion y alcance de las corridas de MRP (posible fragmentacion excesiva de la planificacion).", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Accenture (Desarrollo)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ABAP-06", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "ABAP/Desarrollo", "Hallazgo": "Framework de Value Chain Monitoring genera la mayor cantidad de escaneos sobre una misma tabla.", "Evidencia (EWA)": "CL_VCM_MNTRDOC_VIRTUAL / CL_VCM_RT_DB_ACCESS contra VCM_RT_BO_ITEM (tabla mas escaneada segun el EWA); hasta 21,792 s de tiempo total y 7,044 MB de memoria promedio por ejecucion.", "Actividad propuesta": "Revisar el diseno del monitor VCM; posible sobre-consulta desde el frontend de monitoreo de cadena de valor.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Accenture (Desarrollo)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ABAP-07", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "ABAP/Desarrollo", "Hallazgo": "Consultas del add-on de sitio/POS con muy alta frecuencia de ejecucion.", "Evidencia (EWA)": "/XSTAPOS/S4_SITE_TOTSALES_01 y /XSTAPOS/S4_SITE_CONV_RATE_01 contra VBAP: 127,975 s y 85,798 s de tiempo total, con 171,988 y 105,164 ejecuciones respectivamente.", "Actividad propuesta": "Investigar el add-on XSTAPOS (ventas/tipo de cambio por sitio); evaluar cache o reduccion de frecuencia de llamada.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Accenture (Desarrollo)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ABAP-08", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "ABAP/Desarrollo", "Hallazgo": "Servicio web custom domina el tiempo de respuesta de Web Services.", "Evidencia (EWA)": "ZOTCSWS_SALES_SIMULATE: 88% del tiempo de respuesta total de web services, promedio 944.6 ms, DB promedio 505.9 ms.", "Actividad propuesta": "Revisar la performance del servicio de simulacion de ventas O2C.", "Prioridad": "Baja", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Accenture (Desarrollo)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ABAP-09", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "ABAP/Desarrollo", "Hallazgo": "Jobs batch custom/negocio con consumo de CPU/BD elevado.", "Evidencia (EWA)": "ZPTPRE_ENVIO_ALMACEN, ZRPP_JOB_MATERIALS, VCM_RT_RESOLVE_VALCHAIN_ISSUES y CIBDOP_DOWN_PP entre los batch de mayor carga de la semana.", "Actividad propuesta": "Perfilar cada job y evaluar oportunidades de tuning o reprogramacion de horario fuera de pico.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Accenture (Desarrollo)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ABAP-10", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "ABAP/Desarrollo", "Hallazgo": "Tiempos de respuesta extremos (outliers) en apps de alto uso.", "Evidencia (EWA)": "MIGO: maximo 268.5 millones de ms. MB52: mediana 95.7 s. MMBE: mediana 83.5 s (Apps by Workload).", "Actividad propuesta": "Validar si son sesiones de usuario inactivas (tiempo de pensamiento incluido) o un problema real de backend, antes de invertir esfuerzo de tuning.", "Prioridad": "Baja", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Accenture (Desarrollo)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ABAP-11", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "ABAP/Desarrollo", "Hallazgo": "Nota de side-effect de performance pendiente de implementar.", "Evidencia (EWA)": "Causante 3478493 - Solucion 3769931: 'Performance issue with Function CS_BOM_EXPL_MAT_V2'. Prioridad Media, no implementada.", "Actividad propuesta": "Evaluar e implementar la nota SAP; tiene impacto directo en performance de explosion de BOM.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Accenture (Desarrollo)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "SEC-01", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Seguridad", "Hallazgo": "Usuarios estandar con contrasenas por defecto.", "Evidencia (EWA)": "Deteccion generica de contrasenas por defecto en usuarios estandar (alerta EWA).", "Actividad propuesta": "Ejecutar RSUSR003; validar SAP* y SAPCPIC en todos los clientes; verificar TMSADM en cliente 000; depurar cliente 066 / usuario EARLYWATCH si aplica.", "Prioridad": "Alta", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Seguridad (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "SEC-02", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Seguridad", "Hallazgo": "Alto numero de usuarios con autorizacion critica de Debug/Replace.", "Evidencia (EWA)": "134 usuarios en cliente 100 con S_DEVELOP ACTVT=02 OBJTYPE=DEBUG (permite modificar datos durante depuracion).", "Actividad propuesta": "Revisar y depurar roles via PFCG/SUIM; separar la autorizacion de debug-replace del resto de S_DEVELOP.", "Prioridad": "Alta", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Seguridad (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "SEC-03", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Seguridad", "Hallazgo": "Alto numero de usuarios con acceso de cambio/visualizacion a todas las tablas.", "Evidencia (EWA)": "145 usuarios en cliente 100 con SE16/SE16N/SM30/SM31 + S_TABU_DIS (ACTVT 02 o 03, DICBERCLS=*).", "Actividad propuesta": "Revisar el concepto de autorizaciones de acceso directo a tablas.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Seguridad (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "SEC-04", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Seguridad", "Hallazgo": "Alto numero de usuarios autorizados a ejecutar cualquier reporte.", "Evidencia (EWA)": "146 usuarios en cliente 100 con SA38/SE38 + S_PROGRAM (P_GROUP=*) o S_DEVELOP OBJTYPE=PROG.", "Actividad propuesta": "Revisar el concepto de autorizaciones de ejecucion de reportes.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Seguridad (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "SEC-05", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Seguridad", "Hallazgo": "Componente central fuera de la ventana de cobertura de SAP Security Notes.", "Evidencia (EWA)": "S4CORE 107 SP1: 44 meses desde el ensamblaje final (ventana de cobertura garantizada es de 24 meses).", "Actividad propuesta": "Mitigar con evaluacion mensual de Security Notes (SAP Security Patch Day) hasta el upgrade a S/4HANA 2025. Coordinar con Arquitectura.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Seguridad (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "SEC-06", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Seguridad", "Hallazgo": "Servicios ICF activos sin uso en apps UI5 (superficie de exposicion innecesaria).", "Evidencia (EWA)": "92 servicios ICF activados no utilizables (94.3% de aprovechamiento, bajo el umbral recomendado de 95%).", "Actividad propuesta": "Desactivar los servicios ICF no utilizados; identificarlos segun KBA SAP 3261151.", "Prioridad": "Baja", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Seguridad (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "SEC-07", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Seguridad", "Hallazgo": "Comunicacion interna del sistema no protegida (ver tambien Basis).", "Evidencia (EWA)": "Parametro system/secure_communication = OFF en todas las instancias.", "Actividad propuesta": "Activar comunicacion interna segura; responsable conjunto con Basis (ver fila BAS-11).", "Prioridad": "Baja", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Basis (Javier)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "FUN-01", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Funcional", "Hallazgo": "Inconsistencias de integridad de periodo en Gestion de Materiales.", "Evidencia (EWA)": "Tabla MSLB, cliente 100: fiscal year/periodo actual en 0000/00 (inconsistencia de periodo).", "Actividad propuesta": "Ejecutar el reporte MMIM_S4SIC_CHECKS (Notas SAP 3268840 y 3212869) y corregir antes del upgrade, segun guia de Nota 2197392.", "Prioridad": "Alta", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Funcional MM (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "FUN-02", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Funcional", "Hallazgo": "Notas de side-effects pendientes por modulo funcional.", "Evidencia (EWA)": "PP/PM: 13 notas pendientes (6 de prioridad Alta, ligadas a MD01N y fuentes de suministro). FI: 2 (Media). CA: 4 (Media). IS: 3 (2 de prioridad Alta, MRP en HANA).", "Actividad propuesta": "Priorizar la implementacion de las notas de prioridad Alta por modulo, coordinando con ABAP para su aplicacion.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Funcional (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "FUN-03", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Funcional", "Hallazgo": "Colas qRFC salientes en estado de error.", "Evidencia (EWA)": "18 colas WB2_TC_M_* en estado SYSFAIL con mensaje 'no se puede crear ningun pedido abierto cial.princ'.", "Actividad propuesta": "Analizar segun Nota SAP 378903; establecer monitoreo diario en SMQ1.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Funcional (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "FUN-04", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Funcional", "Hallazgo": "Colas qRFC entrantes en estado de error.", "Evidencia (EWA)": "14 colas en estado SYSFAIL relacionadas con inconsistencias de PI/stock en EWM (bloqueos de entrega, cantidades excedidas).", "Actividad propuesta": "Analizar en SMQ2 segun Nota SAP 378903.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Funcional (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "FUN-05", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Funcional", "Hallazgo": "Housekeeping de EWM incompleto (jobs y archiving).", "Evidencia (EWA)": "Menos del 30% de los jobs de housekeeping recomendados estan programados (12 faltantes). Menos del 15% de los objetos EWM tienen archiving configurado (23 objetos).", "Actividad propuesta": "Agendar los jobs faltantes y configurar archiving; coordinar con Basis (ver fila BAS-13).", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Funcional (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "FUN-06", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Funcional", "Hallazgo": "Housekeeping de Transportation Management incompleto.", "Evidencia (EWA)": "7 jobs recomendados no programados. 13 notas de side-effects pendientes (3 de prioridad Alta: soluciones 3399884, 3343961 y 3683386).", "Actividad propuesta": "Programar los jobs faltantes; priorizar la implementacion de las 3 notas de prioridad Alta.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Funcional (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "FUN-07", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Funcional", "Hallazgo": "Pendientes de revision tras Silent Data Migration.", "Evidencia (EWA)": "Filas nuevas agregadas despues de finalizado el SDM y clases con estado 'Initial' pendientes de revision.", "Actividad propuesta": "Revisar de cara al upgrade a S/4HANA 2025; coordinar con Arquitectura.", "Prioridad": "Baja", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Funcional (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "FUN-08", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Funcional", "Hallazgo": "Errores de actualizacion requieren revision de causa de negocio.", "Evidencia (EWA)": "127 update errors detectados (mismo hallazgo que BAS-07).", "Actividad propuesta": "Revisar conjuntamente con Basis, por proceso de negocio afectado, para determinar si reprocesar o corregir origen.", "Prioridad": "Alta", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Funcional (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ARQ-01", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Arquitectura", "Hallazgo": "Componente central muy detras del ultimo Support Package disponible.", "Evidencia (EWA)": "S4CORE 107: SP1 instalado, SP8 es el ultimo disponible (mas de 5 SPs de diferencia). 44 meses desde el ensamblaje final.", "Actividad propuesta": "Insumo para el proyecto de upgrade a S/4HANA 2025; no se remedia en este ciclo (foco del mes es optimizacion, no obsolescencia).", "Prioridad": "Baja", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Arquitectura (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ARQ-02", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Arquitectura", "Hallazgo": "Ventana de mantenimiento mainstream vigente.", "Evidencia (EWA)": "SAP S/4HANA 2022: mainstream maintenance vence 31.12.2027.", "Actividad propuesta": "Confirma ventana razonable para el upgrade planeado a S/4HANA 2025; sin accion inmediata requerida.", "Prioridad": "Baja", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Arquitectura (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ARQ-03", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Arquitectura", "Hallazgo": "Add-on de integracion con Ariba fuera de soporte.", "Evidencia (EWA)": "SAP Ariba Cloud Integration Gateway Add-On con Support Package no soportado por SAP (alerta EWA).", "Actividad propuesta": "Validar continuidad y compatibilidad de este add-on en el plan de upgrade a S/4HANA 2025.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Arquitectura (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ARQ-04", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Arquitectura", "Hallazgo": "Add-ons a validar en el assessment de compatibilidad del upgrade.", "Evidencia (EWA)": "SFSF EC Integration 1210, SuccessFactors HCM Integr 3.0, SAP IBP S/4HANA Integr 1.0, Ariba Cloud Int S/4HANA 1.0.", "Actividad propuesta": "Incluir explicitamente en el assessment de compatibilidad del proyecto de upgrade a S/4HANA 2025.", "Prioridad": "Baja", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Arquitectura (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "ARQ-05", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Arquitectura", "Hallazgo": "Modo Home Page del Fiori Launchpad sera descontinuado.", "Evidencia (EWA)": "Tiempo de respuesta promedio 10.7 s y 82 KB de datos promedio enviados (umbral de alerta: 5s / 50KB). Spaces & Pages no habilitado.", "Actividad propuesta": "Planear la migracion a Spaces & Pages como parte de la modernizacion UX; puede ejecutarse antes del upgrade.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Arquitectura (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "INT-01", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Integraciones/UX", "Hallazgo": "Alto volumen de errores en el log de Gateway.", "Evidencia (EWA)": "Entre 656 y 781 errores diarios en la ultima semana. Principales: /XSTAPOS/OA (2,199 + 256 ocurrencias), /IWFND/CM_MGW en varios servicios OA_MAIN_UC_SRV / OA_MATERIAL_SDDOC_SRV.", "Actividad propuesta": "Revisar en /IWFND/ERROR_LOG (Nota SAP 3013836) y priorizar por servicio afectado.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Integraciones (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "INT-02", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Integraciones/UX", "Hallazgo": "Servicio OData con el mayor tiempo total de procesamiento del sistema.", "Evidencia (EWA)": "CO_SITE_SRV (CO_SITESet): 2,450,208,726 ms de tiempo total, promedio 10,606 ms por llamada; el mas costoso del reporte, con clara diferencia sobre el resto.", "Actividad propuesta": "Investigar el servicio OData CO_SITE_SRV como candidato principal de optimizacion de aplicacion.", "Prioridad": "Alta", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Integraciones (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "INT-03", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Integraciones/UX", "Hallazgo": "Patron de automatizacion genera un numero muy alto de sub-llamadas RFC.", "Evidencia (EWA)": "Decenas de sub-pasos por accion en /SCWM/PRDO (finalizacion de entregas EWM) y VF01 (impresion de facturas), sugiriendo automatizacion tipo BDC/GuiXT con muchas pantallas por transaccion.", "Actividad propuesta": "Evaluar si el patron de automatizacion actual puede optimizarse para reducir el numero de llamadas RFC generadas.", "Prioridad": "Media", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Integraciones (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}, {"ID": "INT-04", "Fecha EWA": "24/08/2026", "Sistema": "PS4", "Categoria": "Integraciones/UX", "Hallazgo": "Fiori Launchpad y servicios ICF sin uso (ver detalle en Arquitectura y Seguridad).", "Evidencia (EWA)": "Ver filas ARQ-05 (Home Page performance) y SEC-06 (servicios ICF sin uso).", "Actividad propuesta": "Ejecutar en conjunto con las actividades relacionadas; evitar duplicar responsable de seguimiento.", "Prioridad": "Baja", "Dueno seguimiento": "Javier (Basis)", "Ejecutor propuesto": "Arquitectura (por asignar)", "Aprobador": "Carlos Sanchez", "Estado": "Pendiente", "Fecha compromiso": null, "Notas de seguimiento": null}];
   const CATEGORY_ORDER = ["Basis", "ABAP/Desarrollo", "Seguridad", "Funcional", "Arquitectura", "Integraciones/UX"];
   const CATEGORY_COLORS = {"Basis": {"light": "#2a78d6", "dark": "#3987e5"}, "ABAP/Desarrollo": {"light": "#eb6834", "dark": "#d95926"}, "Seguridad": {"light": "#1baf7a", "dark": "#199e70"}, "Funcional": {"light": "#eda100", "dark": "#c98500"}, "Arquitectura": {"light": "#e87ba4", "dark": "#d55181"}, "Integraciones/UX": {"light": "#008300", "dark": "#008300"}};
 
@@ -226,11 +269,15 @@
   };
   const PRIORITY_ORDER = ["Alta", "Media", "Baja"];
 
+  // Los 5 valores reales del CHECK de la columna estado (db/schema.sql) — en
+  // este orden porque es el orden natural del flujo de un item.
+  const ESTADO_ORDER = ["Pendiente", "En progreso", "Bloqueado", "Finalizado", "Cancelado"];
   const ESTADO_COLOR = {
-    "Pendiente":     "#898781",
-    "En progreso":   "#eda100",
-    "Completado":    "#0ca30c",
-    "Bloqueado":     "#d03b3b"
+    "Pendiente":   "#898781",
+    "En progreso": "#eda100",
+    "Bloqueado":   "#d03b3b",
+    "Finalizado":  "#0ca30c",
+    "Cancelado":   "#52514e"
   };
   function estadoColor(e) { return ESTADO_COLOR[e] || "#898781"; }
   function catColor(c) {
@@ -238,83 +285,118 @@
     if (!m) return { light: "#898781", dark: "#898781" };
     return m;
   }
-
-  // ---- stat tiles ----
-  const total = BACKLOG.length;
-  const altaCount = BACKLOG.filter(d => d.Prioridad === "Alta").length;
-  const numCats = new Set(BACKLOG.map(d => d.Categoria)).size;
-  const numSistemas = new Set(BACKLOG.map(d => d.Sistema)).size;
-
-  const statRow = document.getElementById('stat-row');
-  const stats = [
-    { value: total, label: "Actividades totales" },
-    { value: altaCount, label: "Prioridad alta" },
-    { value: numCats, label: "Categorías cubiertas" },
-    { value: numSistemas, label: "Sistema" + (numSistemas === 1 ? "" : "s") + " (" + [...new Set(BACKLOG.map(d=>d.Sistema))].join(", ") + ")" }
-  ];
-  stats.forEach(s => {
-    const div = document.createElement('div');
-    div.className = 'stat-tile';
-    div.innerHTML = '<div class="value">' + s.value + '</div><div class="label">' + s.label + '</div>';
-    statRow.appendChild(div);
-  });
-
-  document.getElementById('last-updated-pill').textContent = 'EWA: 24-ago-2026';
-
-  // ---- category bars ----
-  const catCounts = {};
-  BACKLOG.forEach(d => { catCounts[d.Categoria] = (catCounts[d.Categoria] || 0) + 1; });
-  const maxCat = Math.max(...Object.values(catCounts));
-  const barsEl = document.getElementById('category-bars');
-  CATEGORY_ORDER.filter(c => catCounts[c]).forEach(c => {
-    const count = catCounts[c];
-    const pct = Math.round((count / maxCat) * 100);
-    const color = catColor(c);
-    const row = document.createElement('div');
-    row.className = 'bar-row';
-    row.innerHTML =
-      '<span class="cat-label">' + c + '</span>' +
-      '<span class="bar-track"><span class="bar-fill" style="width:' + pct + '%; background: light-dark(' + color.light + ', ' + color.dark + ');"></span></span>' +
-      '<span class="cat-count">' + count + '</span>';
-    barsEl.appendChild(row);
-  });
-
-  // ---- priority tiles ----
-  const prioCounts = {};
-  BACKLOG.forEach(d => { prioCounts[d.Prioridad] = (prioCounts[d.Prioridad] || 0) + 1; });
-  const prioEl = document.getElementById('prio-tiles');
-  PRIORITY_ORDER.filter(p => prioCounts[p]).forEach(p => {
-    const meta = PRIORITY_META[p];
-    const div = document.createElement('div');
-    div.className = 'prio-tile';
-    div.innerHTML =
-      '<span class="prio-dot" style="background:' + meta.hex + ';"></span>' +
-      '<span class="prio-name">' + meta.label + '</span>' +
-      '<span class="prio-count">' + prioCounts[p] + '</span>';
-    prioEl.appendChild(div);
-  });
-
-  // ---- filters ----
-  function fillSelect(id, values) {
-    const sel = document.getElementById(id);
-    values.forEach(v => {
-      const opt = document.createElement('option');
-      opt.value = v; opt.textContent = v;
-      sel.appendChild(opt);
-    });
-  }
-  fillSelect('filter-categoria', CATEGORY_ORDER.filter(c => catCounts[c]));
-  fillSelect('filter-prioridad', PRIORITY_ORDER.filter(p => prioCounts[p]));
-  fillSelect('filter-estado', [...new Set(BACKLOG.map(d => d.Estado))].sort());
-
-  // ---- table ----
-  const tbody = document.getElementById('table-body');
-  const resultCount = document.getElementById('result-count');
-
   function escapeHtml(s) {
     if (s === null || s === undefined) return '';
     return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
   }
+
+  // BACKLOG se llena con GET /api/items al cargar la página. DETAIL_CACHE
+  // guarda el detalle completo (evidencia, actividad propuesta, etc.) de
+  // cada item la primera vez que se abre su fila — GET /api/items no trae
+  // esos campos a propósito, para no cargar 48 textos largos de una vez.
+  let BACKLOG = [];
+  const DETAIL_CACHE = {};
+  const OPEN_ROWS = new Set();
+
+  async function cargarBacklog() {
+    const loadState = document.getElementById('load-state');
+    const appContent = document.getElementById('app-content');
+    try {
+      const resp = await fetch('/api/items');
+      if (!resp.ok) {
+        throw new Error('El API respondió ' + resp.status);
+      }
+      BACKLOG = await resp.json();
+      loadState.style.display = 'none';
+      appContent.style.display = '';
+      renderPanorama();
+      renderFiltros();
+      render();
+    } catch (err) {
+      loadState.textContent = 'No se pudo cargar el backlog (' + err.message + '). Recarga la página para reintentar — si la base de datos estaba dormida, el primer intento a veces falla y el siguiente funciona.';
+      loadState.classList.add('error');
+    }
+  }
+
+  function renderPanorama() {
+    const total = BACKLOG.length;
+    const altaCount = BACKLOG.filter(d => d.prioridad === "Alta").length;
+    const numCats = new Set(BACKLOG.map(d => d.categoria)).size;
+    const sistemas = [...new Set(BACKLOG.map(d => d.sistema))];
+
+    const statRow = document.getElementById('stat-row');
+    statRow.innerHTML = '';
+    const stats = [
+      { value: total, label: "Actividades totales" },
+      { value: altaCount, label: "Prioridad alta" },
+      { value: numCats, label: "Categorías cubiertas" },
+      { value: sistemas.length, label: "Sistema" + (sistemas.length === 1 ? "" : "s") + " (" + sistemas.join(", ") + ")" }
+    ];
+    stats.forEach(s => {
+      const div = document.createElement('div');
+      div.className = 'stat-tile';
+      div.innerHTML = '<div class="value">' + s.value + '</div><div class="label">' + s.label + '</div>';
+      statRow.appendChild(div);
+    });
+
+    // ---- category bars ----
+    const catCounts = {};
+    BACKLOG.forEach(d => { catCounts[d.categoria] = (catCounts[d.categoria] || 0) + 1; });
+    const maxCat = Math.max(...Object.values(catCounts), 1);
+    const barsEl = document.getElementById('category-bars');
+    barsEl.innerHTML = '';
+    CATEGORY_ORDER.filter(c => catCounts[c]).forEach(c => {
+      const count = catCounts[c];
+      const pct = Math.round((count / maxCat) * 100);
+      const color = catColor(c);
+      const row = document.createElement('div');
+      row.className = 'bar-row';
+      row.innerHTML =
+        '<span class="cat-label">' + c + '</span>' +
+        '<span class="bar-track"><span class="bar-fill" style="width:' + pct + '%; background: light-dark(' + color.light + ', ' + color.dark + ');"></span></span>' +
+        '<span class="cat-count">' + count + '</span>';
+      barsEl.appendChild(row);
+    });
+
+    // ---- priority tiles ----
+    const prioCounts = {};
+    BACKLOG.forEach(d => { prioCounts[d.prioridad] = (prioCounts[d.prioridad] || 0) + 1; });
+    const prioEl = document.getElementById('prio-tiles');
+    prioEl.innerHTML = '';
+    PRIORITY_ORDER.filter(p => prioCounts[p]).forEach(p => {
+      const meta = PRIORITY_META[p];
+      const div = document.createElement('div');
+      div.className = 'prio-tile';
+      div.innerHTML =
+        '<span class="prio-dot" style="background:' + meta.hex + ';"></span>' +
+        '<span class="prio-name">' + meta.label + '</span>' +
+        '<span class="prio-count">' + prioCounts[p] + '</span>';
+      prioEl.appendChild(div);
+    });
+  }
+
+  function renderFiltros() {
+    function fillSelect(id, values, keepSelection) {
+      const sel = document.getElementById(id);
+      const prev = keepSelection ? sel.value : '';
+      sel.querySelectorAll('option:not(:first-child)').forEach(o => o.remove());
+      values.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v; opt.textContent = v;
+        sel.appendChild(opt);
+      });
+      if (keepSelection && values.includes(prev)) sel.value = prev;
+    }
+    const catCounts = new Set(BACKLOG.map(d => d.categoria));
+    const prioCounts = new Set(BACKLOG.map(d => d.prioridad));
+    const estadoCounts = new Set(BACKLOG.map(d => d.estado));
+    fillSelect('filter-categoria', CATEGORY_ORDER.filter(c => catCounts.has(c)), true);
+    fillSelect('filter-prioridad', PRIORITY_ORDER.filter(p => prioCounts.has(p)), true);
+    fillSelect('filter-estado', ESTADO_ORDER.filter(e => estadoCounts.has(e)), true);
+  }
+
+  const tbody = document.getElementById('table-body');
+  const resultCount = document.getElementById('result-count');
 
   function render() {
     const q = document.getElementById('search-box').value.trim().toLowerCase();
@@ -323,11 +405,11 @@
     const fEstado = document.getElementById('filter-estado').value;
 
     const filtered = BACKLOG.filter(d => {
-      if (fCat && d.Categoria !== fCat) return false;
-      if (fPrio && d.Prioridad !== fPrio) return false;
-      if (fEstado && d.Estado !== fEstado) return false;
+      if (fCat && d.categoria !== fCat) return false;
+      if (fPrio && d.prioridad !== fPrio) return false;
+      if (fEstado && d.estado !== fEstado) return false;
       if (q) {
-        const hay = (d.ID + ' ' + d.Hallazgo + ' ' + (d['Dueno seguimiento']||'') + ' ' + (d['Ejecutor propuesto']||'')).toLowerCase();
+        const hay = (d.codigo_item + ' ' + d.hallazgo + ' ' + (d.dueno_seguimiento||'') + ' ' + (d.ejecutor||'')).toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -336,38 +418,171 @@
     resultCount.textContent = filtered.length + ' de ' + BACKLOG.length + ' actividades';
 
     tbody.innerHTML = '';
-    filtered.forEach((d, idx) => {
-      const cat = catColor(d.Categoria);
-      const prio = PRIORITY_META[d.Prioridad] || { hex: '#898781', label: d.Prioridad };
-      const eColor = estadoColor(d.Estado);
+    filtered.forEach((d) => {
+      const cat = catColor(d.categoria);
+      const prio = PRIORITY_META[d.prioridad] || { hex: '#898781', label: d.prioridad };
+      const eColor = estadoColor(d.estado);
+      const codigo = d.codigo_item;
 
       const row = document.createElement('tr');
       row.className = 'main-row';
+      row.dataset.codigo = codigo;
       row.innerHTML =
-        '<td class="id-cell">' + escapeHtml(d.ID) + '</td>' +
-        '<td><span class="cat-dot" style="background: light-dark(' + cat.light + ', ' + cat.dark + ');"></span>' + escapeHtml(d.Categoria) + '</td>' +
-        '<td class="hallazgo-cell">' + escapeHtml(d.Hallazgo) + '</td>' +
+        '<td class="id-cell">' + escapeHtml(codigo) + '</td>' +
+        '<td><span class="cat-dot" style="background: light-dark(' + cat.light + ', ' + cat.dark + ');"></span>' + escapeHtml(d.categoria) + '</td>' +
+        '<td class="hallazgo-cell">' + escapeHtml(d.hallazgo) + '</td>' +
         '<td><span class="status-badge"><span class="dot" style="background:' + prio.hex + ';"></span>' + escapeHtml(prio.label) + '</span></td>' +
-        '<td><span class="status-badge"><span class="dot" style="background:' + eColor + ';"></span>' + escapeHtml(d.Estado) + '</span></td>';
+        '<td class="estado-cell"><span class="status-badge"><span class="dot" style="background:' + eColor + ';"></span><span class="estado-text">' + escapeHtml(d.estado) + '</span></span></td>';
 
       const detail = document.createElement('tr');
-      detail.className = 'detail-row';
-      detail.innerHTML =
-        '<td colspan="5"><div class="detail-grid">' +
-          '<div class="detail-block"><h4>Evidencia (EWA)</h4><p>' + escapeHtml(d['Evidencia (EWA)']) + '</p></div>' +
-          '<div class="detail-block"><h4>Actividad propuesta</h4><p>' + escapeHtml(d['Actividad propuesta']) + '</p></div>' +
-        '</div>' +
-        '<div class="detail-meta">' +
-          '<span><strong>Dueño:</strong> ' + escapeHtml(d['Dueno seguimiento']) + '</span>' +
-          '<span><strong>Ejecutor:</strong> ' + escapeHtml(d['Ejecutor propuesto']) + '</span>' +
-          '<span><strong>Aprobador:</strong> ' + escapeHtml(d['Aprobador']) + '</span>' +
-          '<span><strong>Fecha EWA:</strong> ' + escapeHtml(d['Fecha EWA']) + '</span>' +
-        '</div></td>';
+      detail.className = 'detail-row' + (OPEN_ROWS.has(codigo) ? ' open' : '');
+      detail.dataset.codigo = codigo;
+      detail.innerHTML = '<td colspan="5"></td>';
+      renderDetailBody(detail, codigo);
 
-      row.addEventListener('click', () => detail.classList.toggle('open'));
+      row.addEventListener('click', () => toggleRow(codigo, row, detail));
       tbody.appendChild(row);
       tbody.appendChild(detail);
     });
+  }
+
+  function toggleRow(codigo, row, detail) {
+    const willOpen = !detail.classList.contains('open');
+    detail.classList.toggle('open', willOpen);
+    if (willOpen) {
+      OPEN_ROWS.add(codigo);
+      if (!DETAIL_CACHE[codigo]) cargarDetalle(codigo, detail);
+    } else {
+      OPEN_ROWS.delete(codigo);
+    }
+  }
+
+  function renderDetailBody(detail, codigo) {
+    const td = detail.querySelector('td');
+    const cached = DETAIL_CACHE[codigo];
+    if (!cached) {
+      td.innerHTML = '<div class="detail-loading">Cargando detalle&hellip;</div>';
+      return;
+    }
+    const d = cached;
+    td.innerHTML =
+      '<div class="detail-grid">' +
+        '<div class="detail-block"><h4>Evidencia (EWA)</h4><p>' + escapeHtml(d.evidencia) + '</p></div>' +
+        '<div class="detail-block"><h4>Actividad propuesta</h4><p>' + escapeHtml(d.actividad_propuesta) + '</p></div>' +
+      '</div>' +
+      '<div class="detail-meta">' +
+        '<span><strong>Dueño:</strong> ' + escapeHtml(d.dueno_seguimiento) + '</span>' +
+        '<span><strong>Ejecutor:</strong> ' + escapeHtml(d.ejecutor) + '</span>' +
+        '<span><strong>Aprobador:</strong> ' + escapeHtml(d.aprobador) + '</span>' +
+        '<span><strong>EWA:</strong> ' + escapeHtml(d.codigo_ewa) + '</span>' +
+      '</div>' +
+      '<div class="edit-form">' +
+        '<h4>Actualizar seguimiento</h4>' +
+        '<div class="edit-grid">' +
+          '<div class="edit-field">' +
+            '<label for="estado-' + codigo + '">Estado</label>' +
+            '<select id="estado-' + codigo + '">' +
+              ESTADO_ORDER.map(e => '<option value="' + e + '"' + (e === d.estado ? ' selected' : '') + '>' + e + '</option>').join('') +
+            '</select>' +
+          '</div>' +
+          '<div class="edit-field">' +
+            '<label for="fecha-' + codigo + '">Fecha de compromiso</label>' +
+            '<input type="date" id="fecha-' + codigo + '" value="' + (d.fecha_compromiso ? d.fecha_compromiso.slice(0,10) : '') + '">' +
+          '</div>' +
+          '<div class="edit-field" style="grid-column: span 1;">' +
+            '<label for="notas-' + codigo + '">Notas de seguimiento</label>' +
+            '<textarea id="notas-' + codigo + '">' + escapeHtml(d.notas_seguimiento || '') + '</textarea>' +
+          '</div>' +
+          '<div class="edit-actions">' +
+            '<button class="save-btn" type="button" id="save-' + codigo + '">Guardar cambios</button>' +
+            '<span class="save-status" id="status-' + codigo + '"></span>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    td.querySelector('#save-' + cssEscape(codigo)).addEventListener('click', () => guardarCambios(codigo));
+  }
+
+  // IDs de items pueden traer guiones (BAS-01) — querySelector con # necesita
+  // el escape correcto para que no se interprete como selector CSS raro.
+  function cssEscape(s) { return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/[^a-zA-Z0-9_-]/g, '\\$&'); }
+
+  async function cargarDetalle(codigo, detail) {
+    try {
+      const resp = await fetch('/api/items/' + encodeURIComponent(codigo));
+      if (!resp.ok) throw new Error('El API respondió ' + resp.status);
+      const data = await resp.json();
+      DETAIL_CACHE[codigo] = data;
+      renderDetailBody(detail, codigo);
+    } catch (err) {
+      detail.querySelector('td').innerHTML = '<div class="detail-error">No se pudo cargar el detalle (' + escapeHtml(err.message) + '). Cierra y vuelve a abrir la fila para reintentar.</div>';
+    }
+  }
+
+  async function guardarCambios(codigo) {
+    const btn = document.getElementById('save-' + cssEscape(codigo));
+    const statusEl = document.getElementById('status-' + cssEscape(codigo));
+    const nuevoEstado = document.getElementById('estado-' + cssEscape(codigo)).value;
+    const nuevaFecha = document.getElementById('fecha-' + cssEscape(codigo)).value;
+    const nuevasNotas = document.getElementById('notas-' + cssEscape(codigo)).value;
+
+    btn.disabled = true;
+    statusEl.textContent = 'Guardando…';
+    statusEl.className = 'save-status';
+
+    try {
+      const resp = await fetch('/api/items/' + encodeURIComponent(codigo), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          estado: nuevoEstado,
+          notas_seguimiento: nuevasNotas === '' ? null : nuevasNotas,
+          fecha_compromiso: nuevaFecha === '' ? null : nuevaFecha,
+        }),
+      });
+      if (!resp.ok) {
+        const errBody = await resp.json().catch(() => ({}));
+        throw new Error(errBody.error || ('El API respondió ' + resp.status));
+      }
+      const actualizado = await resp.json();
+
+      // Si no hubo ningún cambio real, items-update.ts responde solo con un
+      // "mensaje" (sin los campos del item) — en ese caso no tocamos
+      // DETAIL_CACHE ni BACKLOG, para no pisar los valores actuales con
+      // undefined.
+      const huboCambio = Boolean(actualizado.codigo_item);
+      if (huboCambio) {
+        // Refleja el cambio en el detalle cacheado, en la fila de la tabla,
+        // y en los datos base (para que panorama/gráficos/filtros lo reflejen).
+        DETAIL_CACHE[codigo] = Object.assign({}, DETAIL_CACHE[codigo], actualizado);
+        const idxBacklog = BACKLOG.findIndex(d => d.codigo_item === codigo);
+        if (idxBacklog !== -1) {
+          BACKLOG[idxBacklog] = Object.assign({}, BACKLOG[idxBacklog], {
+            estado: actualizado.estado,
+            fecha_compromiso: actualizado.fecha_compromiso,
+          });
+        }
+      }
+
+      const mensajeOk = huboCambio ? 'Guardado ✓' : 'Sin cambios (ya tenía esos valores)';
+      statusEl.textContent = mensajeOk;
+      statusEl.className = 'save-status ok';
+      renderPanorama();
+      renderFiltros();
+      render();
+      // Como render() reconstruye la tabla entera, la fila se vuelve a abrir
+      // sola gracias a OPEN_ROWS, pero el mensaje de estado se perdería —
+      // lo volvemos a mostrar después de re-renderizar.
+      const statusDespues = document.getElementById('status-' + cssEscape(codigo));
+      if (statusDespues) {
+        statusDespues.textContent = mensajeOk;
+        statusDespues.className = 'save-status ok';
+      }
+    } catch (err) {
+      statusEl.textContent = 'Error: ' + err.message;
+      statusEl.className = 'save-status error';
+      btn.disabled = false;
+    }
   }
 
   document.getElementById('search-box').addEventListener('input', render);
@@ -375,7 +590,7 @@
   document.getElementById('filter-prioridad').addEventListener('change', render);
   document.getElementById('filter-estado').addEventListener('change', render);
 
-  render();
+  cargarBacklog();
 </script>
 </body>
 </html>
