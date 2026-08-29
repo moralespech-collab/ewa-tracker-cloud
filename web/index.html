@@ -137,6 +137,25 @@
   table.activity-table td { padding: 7px 10px; border-bottom: 1px solid var(--gridline); }
   table.activity-table td.num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 
+  .report-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .report-toolbar label { font-size: 0.82rem; color: var(--text-secondary); }
+  .report-toolbar select {
+    font: inherit; font-size: 0.86rem;
+    background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
+  }
+  .report-item { padding: 16px 0; border-top: 1px solid var(--gridline); }
+  .report-item:first-child { border-top: none; padding-top: 6px; }
+  .report-item-header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .report-item-header .id-cell { font-weight: 700; }
+  .report-item-header .hallazgo { color: var(--text-secondary); font-size: 0.88rem; }
+  .report-changes { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+  .report-change-row { font-size: 0.85rem; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+  .report-change-row .campo { font-weight: 600; color: var(--text-primary); min-width: 150px; }
+  .report-change-row .valores { color: var(--text-secondary); }
+  .report-change-row .valores .old { text-decoration: line-through; color: var(--text-muted); }
+  .report-change-row .meta { color: var(--text-muted); font-size: 0.78rem; margin-left: auto; white-space: nowrap; }
+
   .controls {
     display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px;
   }
@@ -271,6 +290,19 @@
         </div>
         <div id="activity-body">
           <div class="chart-empty">Cargando actividad&hellip;</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="section-title">Informe mensual</h2>
+      <div class="chart-card">
+        <div class="report-toolbar">
+          <label for="report-mes">Mes:</label>
+          <select id="report-mes"></select>
+        </div>
+        <div id="report-body">
+          <div class="chart-empty">Cargando informe&hellip;</div>
         </div>
       </div>
     </section>
@@ -601,6 +633,148 @@
     renderActividad();
   });
 
+  // ---- Informe mensual (GET /api/activity-detail) ----
+  // A diferencia de la gráfica (que agrega por categoría), aquí cada fila de
+  // ActivityLog se muestra individual, agrupada por item — el detalle que
+  // pediste para el reporte mensual de avance. ACTIVITY_DETAIL llega sin
+  // agregar; el mes se filtra del lado del cliente con el <select>.
+  let ACTIVITY_DETAIL = [];
+
+  const CAMPO_LABEL = {
+    estado: "Estado",
+    dueno_seguimiento: "Persona responsable",
+    notas_seguimiento: "Notas de seguimiento",
+    fecha_compromiso: "Fecha de compromiso"
+  };
+  function truncar(s, n) {
+    return s.length > n ? s.slice(0, n) + '…' : s;
+  }
+  function formatValor(v) {
+    if (v === null || v === undefined || v === '') return '(vacío)';
+    return truncar(String(v), 140);
+  }
+  function formatFechaHora(iso) {
+    try {
+      return new Date(iso).toLocaleString('es-MX', {
+        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+      });
+    } catch {
+      return iso;
+    }
+  }
+
+  async function cargarInforme() {
+    const body = document.getElementById('report-body');
+    try {
+      const resp = await fetch('/api/activity-detail');
+      if (!resp.ok) {
+        throw new Error('El API respondió ' + resp.status);
+      }
+      ACTIVITY_DETAIL = await resp.json();
+      renderInformeSelectorMes();
+      renderInforme();
+    } catch (err) {
+      body.innerHTML = '';
+      const div = document.createElement('div');
+      div.className = 'chart-empty';
+      div.textContent = 'No se pudo cargar el informe (' + err.message + ').';
+      body.appendChild(div);
+    }
+  }
+
+  function renderInformeSelectorMes() {
+    const select = document.getElementById('report-mes');
+    const meses = [...new Set(ACTIVITY_DETAIL.map(d => d.mes))].sort().reverse();
+    const actual = select.value;
+    select.innerHTML = '';
+    if (meses.length === 0) {
+      select.style.display = 'none';
+      return;
+    }
+    select.style.display = '';
+    meses.forEach(mes => {
+      const opt = document.createElement('option');
+      opt.value = mes;
+      opt.textContent = formatMes(mes);
+      select.appendChild(opt);
+    });
+    select.value = meses.includes(actual) ? actual : meses[0];
+  }
+
+  function renderInforme() {
+    const body = document.getElementById('report-body');
+    const select = document.getElementById('report-mes');
+    body.innerHTML = '';
+
+    if (ACTIVITY_DETAIL.length === 0) {
+      const div = document.createElement('div');
+      div.className = 'chart-empty';
+      div.textContent = 'Todavía no hay actividad registrada — en cuanto se edite un item, aquí aparecerá el informe mensual.';
+      body.appendChild(div);
+      return;
+    }
+
+    const mesSeleccionado = select.value;
+    const filas = ACTIVITY_DETAIL.filter(d => d.mes === mesSeleccionado);
+
+    if (filas.length === 0) {
+      const div = document.createElement('div');
+      div.className = 'chart-empty';
+      div.textContent = 'Sin actividad en ' + formatMes(mesSeleccionado) + '.';
+      body.appendChild(div);
+      return;
+    }
+
+    // Agrupa por item, preservando el orden en que llegan (el API ya las
+    // ordena por codigo_item y fecha_hora) — solo aparecen los items que
+    // tuvieron actividad ese mes, como pediste.
+    const porItem = [];
+    const indice = {};
+    filas.forEach(f => {
+      if (!(f.codigo_item in indice)) {
+        indice[f.codigo_item] = porItem.length;
+        porItem.push({ codigo_item: f.codigo_item, categoria: f.categoria, hallazgo: f.hallazgo, cambios: [] });
+      }
+      porItem[indice[f.codigo_item]].cambios.push(f);
+    });
+
+    porItem.forEach(item => {
+      const div = document.createElement('div');
+      div.className = 'report-item';
+
+      const header = document.createElement('div');
+      header.className = 'report-item-header';
+      header.innerHTML =
+        '<span class="cat-dot" style="background: ' + catColorResolved(item.categoria) + ';"></span>' +
+        '<span class="id-cell"></span>' +
+        '<span class="hallazgo"></span>';
+      header.querySelector('.id-cell').textContent = item.codigo_item;
+      header.querySelector('.hallazgo').textContent = item.hallazgo;
+      div.appendChild(header);
+
+      const lista = document.createElement('div');
+      lista.className = 'report-changes';
+      item.cambios.forEach(c => {
+        const row = document.createElement('div');
+        row.className = 'report-change-row';
+        row.innerHTML =
+          '<span class="campo"></span>' +
+          '<span class="valores"><span class="old"></span> &rarr; <span class="new"></span></span>' +
+          '<span class="meta"></span>';
+        row.querySelector('.campo').textContent = (CAMPO_LABEL[c.campo_cambiado] || c.campo_cambiado) + ':';
+        row.querySelector('.old').textContent = formatValor(c.valor_anterior);
+        row.querySelector('.new').textContent = formatValor(c.valor_nuevo);
+        row.querySelector('.meta').textContent = c.usuario + ' · ' + formatFechaHora(c.fecha_hora);
+        lista.appendChild(row);
+      });
+      div.appendChild(lista);
+
+      body.appendChild(div);
+    });
+  }
+
+  document.getElementById('report-mes').addEventListener('change', renderInforme);
+
   // BACKLOG se llena con GET /api/items al cargar la página. DETAIL_CACHE
   // guarda el detalle completo (evidencia, actividad propuesta, etc.) de
   // cada item la primera vez que se abre su fila — GET /api/items no trae
@@ -878,8 +1052,9 @@
           });
         }
         // El PATCH generó fila(s) nuevas en ActivityLog — recarga la
-        // gráfica de actividad para que también quede al día.
+        // gráfica y el informe mensual para que también queden al día.
         cargarActividad();
+        cargarInforme();
       }
 
       const mensajeOk = huboCambio ? 'Guardado ✓' : 'Sin cambios (ya tenía esos valores)';
@@ -910,6 +1085,7 @@
 
   cargarBacklog();
   cargarActividad();
+  cargarInforme();
 </script>
 </body>
 </html>
