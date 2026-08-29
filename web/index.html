@@ -87,7 +87,7 @@
   .bar-row { display: grid; grid-template-columns: 132px 1fr 34px; align-items: center; gap: 10px; }
   .bar-row .cat-label { font-size: 0.85rem; color: var(--text-secondary); text-align: right; }
   .bar-track { background: var(--gridline); border-radius: 4px; height: 14px; overflow: hidden; }
-  .bar-fill { height: 100%; border-radius: 4px; }
+  .bar-fill { display: block; height: 100%; border-radius: 4px; }
   .bar-row .cat-count { font-size: 0.85rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 
   .prio-tiles { display: flex; flex-direction: column; gap: 10px; }
@@ -99,6 +99,43 @@
   .prio-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
   .prio-tile .prio-name { font-weight: 600; font-size: 0.92rem; }
   .prio-tile .prio-count { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  .chart-card {
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px 22px 16px;
+  }
+  .chart-toolbar { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+  .chart-toggle-btn {
+    font: inherit; font-size: 0.78rem; font-weight: 600; cursor: pointer;
+    background: none; color: var(--text-secondary); border: 1px solid var(--border);
+    border-radius: 999px; padding: 5px 12px;
+  }
+  .chart-toggle-btn:hover { color: var(--text-primary); border-color: var(--baseline); }
+  .activity-svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .activity-svg text { fill: var(--text-secondary); font-size: 11px; font-family: inherit; }
+  .activity-svg .grid-line { stroke: var(--gridline); stroke-width: 1; }
+  .activity-svg .axis-total { fill: var(--text-primary); font-weight: 700; font-size: 11.5px; }
+  .activity-seg { cursor: pointer; }
+  .activity-seg:hover { filter: brightness(1.12); }
+  .chart-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 14px; }
+  .chart-legend .legend-item { display: flex; align-items: center; gap: 7px; font-size: 0.8rem; color: var(--text-secondary); }
+  .chart-legend .swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  .chart-empty { padding: 30px 0; text-align: center; color: var(--text-muted); font-size: 0.9rem; }
+  .chart-tooltip {
+    position: fixed; pointer-events: none; z-index: 20;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; font-size: 0.8rem; box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+    display: none;
+  }
+  .chart-tooltip .tt-value { font-weight: 700; color: var(--text-primary); }
+  .chart-tooltip .tt-label { color: var(--text-secondary); }
+  table.activity-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  table.activity-table th {
+    text-align: left; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--text-muted); font-weight: 700; padding: 7px 10px; border-bottom: 1px solid var(--baseline);
+  }
+  table.activity-table td { padding: 7px 10px; border-bottom: 1px solid var(--gridline); }
+  table.activity-table td.num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 
   .controls {
     display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px;
@@ -227,6 +264,18 @@
     </section>
 
     <section>
+      <h2 class="section-title">Actividad por mes</h2>
+      <div class="chart-card">
+        <div class="chart-toolbar">
+          <button type="button" class="chart-toggle-btn" id="activity-toggle-btn">Ver como tabla</button>
+        </div>
+        <div id="activity-body">
+          <div class="chart-empty">Cargando actividad&hellip;</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
       <h2 class="section-title">Backlog completo</h2>
       <div class="controls">
         <input type="search" id="search-box" placeholder="Buscar por hallazgo, ID o due&ntilde;o...">
@@ -258,6 +307,8 @@
 
 </div>
 
+<div class="chart-tooltip" id="activity-tooltip"></div>
+
 <script>
   const CATEGORY_ORDER = ["Basis", "ABAP/Desarrollo", "Seguridad", "Funcional", "Arquitectura", "Integraciones/UX"];
   const CATEGORY_COLORS = {"Basis": {"light": "#2a78d6", "dark": "#3987e5"}, "ABAP/Desarrollo": {"light": "#eb6834", "dark": "#d95926"}, "Seguridad": {"light": "#1baf7a", "dark": "#199e70"}, "Funcional": {"light": "#eda100", "dark": "#c98500"}, "Arquitectura": {"light": "#e87ba4", "dark": "#d55181"}, "Integraciones/UX": {"light": "#008300", "dark": "#008300"}};
@@ -285,10 +336,270 @@
     if (!m) return { light: "#898781", dark: "#898781" };
     return m;
   }
+  // Resuelve a un solo hex según el modo actual, en vez de dejarle el
+  // trabajo a la función CSS light-dark() — en algunos navegadores/webviews
+  // esa función no se reconoce, la declaración se descarta entera y el color
+  // desaparece (queda transparente) sin ningún aviso visible. Con esto el
+  // color de categoría se calcula igual que ya hacíamos con prioridad/estado
+  // (PRIORITY_META / ESTADO_COLOR): un hex fijo, robusto en cualquier navegador.
+  function prefiereOscuro() {
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  function catColorResolved(c) {
+    const m = catColor(c);
+    return prefiereOscuro() ? m.dark : m.light;
+  }
   function escapeHtml(s) {
     if (s === null || s === undefined) return '';
     return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
   }
+
+  // ---- Actividad por mes (GET /api/activity-summary) ----
+  // ACTIVITY llega como filas planas [{mes:'2026-08', categoria:'Basis', cantidad:3}, ...],
+  // una fila por combinación mes+categoría que tuvo al menos un cambio en
+  // ActivityLog. Se agrega a un stacked bar chart, con la tabla como vista
+  // alternativa (el palette check marcó WARN de contraste en 3 de los 6
+  // colores de categoría, así que la identidad nunca puede depender solo
+  // del color: siempre hay leyenda + tooltip, y aquí además una tabla).
+  let ACTIVITY = [];
+  let ACTIVITY_VIEW = 'chart'; // 'chart' | 'table'
+
+  const MES_CORTO = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  function formatMes(mes) {
+    const partes = mes.split('-');
+    const idx = parseInt(partes[1], 10) - 1;
+    return (MES_CORTO[idx] || mes) + ' ' + partes[0];
+  }
+
+  async function cargarActividad() {
+    const body = document.getElementById('activity-body');
+    try {
+      const resp = await fetch('/api/activity-summary');
+      if (!resp.ok) {
+        throw new Error('El API respondió ' + resp.status);
+      }
+      ACTIVITY = await resp.json();
+      renderActividad();
+    } catch (err) {
+      body.innerHTML = '';
+      const div = document.createElement('div');
+      div.className = 'chart-empty';
+      div.textContent = 'No se pudo cargar la actividad (' + err.message + ').';
+      body.appendChild(div);
+    }
+  }
+
+  function renderActividad() {
+    const body = document.getElementById('activity-body');
+    const toggleBtn = document.getElementById('activity-toggle-btn');
+
+    if (ACTIVITY.length === 0) {
+      toggleBtn.style.display = 'none';
+      body.innerHTML = '';
+      const div = document.createElement('div');
+      div.className = 'chart-empty';
+      div.textContent = 'Todavía no hay actividad registrada — en cuanto se edite un item desde la vitrina, aparecerá aquí.';
+      body.appendChild(div);
+      return;
+    }
+
+    toggleBtn.style.display = '';
+    toggleBtn.textContent = ACTIVITY_VIEW === 'chart' ? 'Ver como tabla' : 'Ver como gráfica';
+
+    body.innerHTML = '';
+    if (ACTIVITY_VIEW === 'chart') {
+      body.appendChild(buildActivityChart());
+      body.appendChild(buildActivityLegend());
+    } else {
+      body.appendChild(buildActivityTable());
+    }
+  }
+
+  // Corta un rect con esquinas redondeadas solo arriba (el "data-end" de la
+  // barra apilada), cuadrado abajo — así el tope del stack se ve como una
+  // barra normal y las uniones entre segmentos internos quedan cuadradas.
+  function roundedTopRectPath(x, y, w, h, r) {
+    const rr = Math.min(r, w / 2, h);
+    return 'M' + x + ',' + (y + h) +
+      ' L' + x + ',' + (y + rr) +
+      ' Q' + x + ',' + y + ' ' + (x + rr) + ',' + y +
+      ' L' + (x + w - rr) + ',' + y +
+      ' Q' + (x + w) + ',' + y + ' ' + (x + w) + ',' + (y + rr) +
+      ' L' + (x + w) + ',' + (y + h) +
+      ' Z';
+  }
+
+  function buildActivityChart() {
+    const meses = [...new Set(ACTIVITY.map(d => d.mes))].sort();
+    const categoriasPresentes = CATEGORY_ORDER.filter(c => ACTIVITY.some(d => d.categoria === c));
+
+    // totales por mes, para la escala y para el label del tope de cada barra
+    const totalesPorMes = meses.map(mes =>
+      ACTIVITY.filter(d => d.mes === mes).reduce((sum, d) => sum + d.cantidad, 0)
+    );
+    const maxTotal = Math.max(...totalesPorMes, 1);
+
+    const W = 900, H = 260;
+    const padLeft = 8, padRight = 8, padTop = 26, padBottom = 30;
+    const plotW = W - padLeft - padRight;
+    const plotH = H - padTop - padBottom;
+    const baselineY = padTop + plotH;
+
+    const bandW = plotW / meses.length;
+    const barW = Math.min(56, bandW * 0.55);
+
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('class', 'activity-svg');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Actividad por mes y categoría');
+
+    // gridlines recesivas: 4 pasos limpios entre 0 y maxTotal
+    const pasos = 4;
+    for (let i = 0; i <= pasos; i++) {
+      const valor = Math.round((maxTotal / pasos) * i);
+      const y = baselineY - (valor / maxTotal) * plotH;
+      const line = document.createElementNS(svgNS, 'line');
+      line.setAttribute('x1', padLeft); line.setAttribute('x2', W - padRight);
+      line.setAttribute('y1', y); line.setAttribute('y2', y);
+      line.setAttribute('class', 'grid-line');
+      svg.appendChild(line);
+    }
+
+    meses.forEach((mes, i) => {
+      const cx = padLeft + bandW * i + bandW / 2;
+      const x = cx - barW / 2;
+      const filasDelMes = categoriasPresentes
+        .map(c => ({ categoria: c, cantidad: (ACTIVITY.find(d => d.mes === mes && d.categoria === c) || {}).cantidad || 0 }))
+        .filter(f => f.cantidad > 0);
+
+      let cum = 0;
+      filasDelMes.forEach((f, idx) => {
+        const esUltimo = idx === filasDelMes.length - 1;
+        const esPrimero = idx === 0;
+        const segTopoValor = cum + f.cantidad;
+        let yTop = baselineY - (segTopoValor / maxTotal) * plotH;
+        let yBottom = baselineY - (cum / maxTotal) * plotH;
+        // gap de 2px entre segmentos: se recorta 1px del lado que toca al vecino
+        if (!esUltimo) yTop += 1;
+        if (!esPrimero) yBottom -= 1;
+        const h = Math.max(yBottom - yTop, 0);
+
+        let el;
+        if (esUltimo) {
+          el = document.createElementNS(svgNS, 'path');
+          el.setAttribute('d', roundedTopRectPath(x, yTop, barW, h, 4));
+        } else {
+          el = document.createElementNS(svgNS, 'rect');
+          el.setAttribute('x', x); el.setAttribute('y', yTop);
+          el.setAttribute('width', barW); el.setAttribute('height', h);
+        }
+        el.setAttribute('class', 'activity-seg');
+        el.setAttribute('style', 'fill: ' + catColorResolved(f.categoria) + ';');
+        el.setAttribute('tabindex', '0');
+        const etiqueta = f.categoria + ': ' + f.cantidad + ' en ' + formatMes(mes);
+        el.setAttribute('aria-label', etiqueta);
+        const mostrar = (evt) => mostrarTooltipActividad(evt, f.categoria, f.cantidad, mes);
+        el.addEventListener('pointermove', mostrar);
+        el.addEventListener('pointerenter', mostrar);
+        el.addEventListener('focus', mostrar);
+        el.addEventListener('pointerleave', ocultarTooltipActividad);
+        el.addEventListener('blur', ocultarTooltipActividad);
+        svg.appendChild(el);
+
+        cum = segTopoValor;
+      });
+
+      // total sobre el tope de la barra — el único número directo, el resto
+      // vive en el eje/leyenda/tooltip
+      const topY = baselineY - (totalesPorMes[i] / maxTotal) * plotH;
+      const totalLabel = document.createElementNS(svgNS, 'text');
+      totalLabel.setAttribute('x', cx);
+      totalLabel.setAttribute('y', Math.max(topY - 8, 12));
+      totalLabel.setAttribute('text-anchor', 'middle');
+      totalLabel.setAttribute('class', 'axis-total');
+      totalLabel.textContent = String(totalesPorMes[i]);
+      svg.appendChild(totalLabel);
+
+      // etiqueta de mes en el eje x
+      const mesLabel = document.createElementNS(svgNS, 'text');
+      mesLabel.setAttribute('x', cx);
+      mesLabel.setAttribute('y', H - 8);
+      mesLabel.setAttribute('text-anchor', 'middle');
+      mesLabel.textContent = formatMes(mes);
+      svg.appendChild(mesLabel);
+    });
+
+    return svg;
+  }
+
+  function mostrarTooltipActividad(evt, categoria, cantidad, mes) {
+    const tt = document.getElementById('activity-tooltip');
+    tt.innerHTML = '';
+    const line1 = document.createElement('div');
+    line1.innerHTML = '<span class="tt-value"></span> <span class="tt-label"></span>';
+    line1.querySelector('.tt-value').textContent = cantidad;
+    line1.querySelector('.tt-label').textContent = 'cambio' + (cantidad === 1 ? '' : 's') + ' — ' + categoria;
+    const line2 = document.createElement('div');
+    line2.className = 'tt-label';
+    line2.textContent = formatMes(mes);
+    tt.appendChild(line1);
+    tt.appendChild(line2);
+    tt.style.display = 'block';
+    const x = (evt.clientX !== undefined ? evt.clientX : evt.target.getBoundingClientRect().left) + 14;
+    const y = (evt.clientY !== undefined ? evt.clientY : evt.target.getBoundingClientRect().top) + 14;
+    tt.style.left = x + 'px';
+    tt.style.top = y + 'px';
+  }
+  function ocultarTooltipActividad() {
+    document.getElementById('activity-tooltip').style.display = 'none';
+  }
+
+  function buildActivityLegend() {
+    const categoriasPresentes = CATEGORY_ORDER.filter(c => ACTIVITY.some(d => d.categoria === c));
+    const wrap = document.createElement('div');
+    wrap.className = 'chart-legend';
+    categoriasPresentes.forEach(c => {
+      const item = document.createElement('span');
+      item.className = 'legend-item';
+      const dot = document.createElement('span');
+      dot.className = 'swatch';
+      dot.style.background = catColorResolved(c);
+      const label = document.createElement('span');
+      label.textContent = c;
+      item.appendChild(dot);
+      item.appendChild(label);
+      wrap.appendChild(item);
+    });
+    return wrap;
+  }
+
+  function buildActivityTable() {
+    const meses = [...new Set(ACTIVITY.map(d => d.mes))].sort().reverse();
+    const table = document.createElement('table');
+    table.className = 'activity-table';
+    table.innerHTML = '<thead><tr><th>Mes</th><th>Categoría</th><th>Cambios</th></tr></thead>';
+    const tbody = document.createElement('tbody');
+    meses.forEach(mes => {
+      const filas = ACTIVITY.filter(d => d.mes === mes).slice().sort((a, b) => b.cantidad - a.cantidad);
+      filas.forEach(f => {
+        const tr = document.createElement('tr');
+        const tdMes = document.createElement('td'); tdMes.textContent = formatMes(mes);
+        const tdCat = document.createElement('td'); tdCat.textContent = f.categoria;
+        const tdCant = document.createElement('td'); tdCant.className = 'num'; tdCant.textContent = f.cantidad;
+        tr.appendChild(tdMes); tr.appendChild(tdCat); tr.appendChild(tdCant);
+        tbody.appendChild(tr);
+      });
+    });
+    table.appendChild(tbody);
+    return table;
+  }
+
+  document.getElementById('activity-toggle-btn').addEventListener('click', () => {
+    ACTIVITY_VIEW = ACTIVITY_VIEW === 'chart' ? 'table' : 'chart';
+    renderActividad();
+  });
 
   // BACKLOG se llena con GET /api/items al cargar la página. DETAIL_CACHE
   // guarda el detalle completo (evidencia, actividad propuesta, etc.) de
@@ -348,12 +659,11 @@
     CATEGORY_ORDER.filter(c => catCounts[c]).forEach(c => {
       const count = catCounts[c];
       const pct = Math.round((count / maxCat) * 100);
-      const color = catColor(c);
       const row = document.createElement('div');
       row.className = 'bar-row';
       row.innerHTML =
         '<span class="cat-label">' + c + '</span>' +
-        '<span class="bar-track"><span class="bar-fill" style="width:' + pct + '%; background: light-dark(' + color.light + ', ' + color.dark + ');"></span></span>' +
+        '<span class="bar-track"><span class="bar-fill" style="width:' + pct + '%; background: ' + catColorResolved(c) + ';"></span></span>' +
         '<span class="cat-count">' + count + '</span>';
       barsEl.appendChild(row);
     });
@@ -419,7 +729,6 @@
 
     tbody.innerHTML = '';
     filtered.forEach((d) => {
-      const cat = catColor(d.categoria);
       const prio = PRIORITY_META[d.prioridad] || { hex: '#898781', label: d.prioridad };
       const eColor = estadoColor(d.estado);
       const codigo = d.codigo_item;
@@ -429,7 +738,7 @@
       row.dataset.codigo = codigo;
       row.innerHTML =
         '<td class="id-cell">' + escapeHtml(codigo) + '</td>' +
-        '<td><span class="cat-dot" style="background: light-dark(' + cat.light + ', ' + cat.dark + ');"></span>' + escapeHtml(d.categoria) + '</td>' +
+        '<td><span class="cat-dot" style="background: ' + catColorResolved(d.categoria) + ';"></span>' + escapeHtml(d.categoria) + '</td>' +
         '<td class="hallazgo-cell">' + escapeHtml(d.hallazgo) + '</td>' +
         '<td><span class="status-badge"><span class="dot" style="background:' + prio.hex + ';"></span>' + escapeHtml(prio.label) + '</span></td>' +
         '<td class="estado-cell"><span class="status-badge"><span class="dot" style="background:' + eColor + ';"></span><span class="estado-text">' + escapeHtml(d.estado) + '</span></span></td>';
@@ -568,6 +877,9 @@
             fecha_compromiso: actualizado.fecha_compromiso,
           });
         }
+        // El PATCH generó fila(s) nuevas en ActivityLog — recarga la
+        // gráfica de actividad para que también quede al día.
+        cargarActividad();
       }
 
       const mensajeOk = huboCambio ? 'Guardado ✓' : 'Sin cambios (ya tenía esos valores)';
@@ -597,6 +909,7 @@
   document.getElementById('filter-estado').addEventListener('change', render);
 
   cargarBacklog();
+  cargarActividad();
 </script>
 </body>
 </html>
