@@ -13,8 +13,10 @@ de Azure/SAP BTP. Ver `../Roadmap EWA Tracker Cloud.cd` para el plan completo (F
   quien tú invites explícitamente — sin gastar un centavo del plan Free.
 - ✅ **Hito 3** — modelo de datos: las 4 tablas reales creadas en Azure SQL, con el backlog real
   de Cuprum cargado y verificado (48 items).
-- ⏭️ Próximo: Hito 4 — CRUD + panorama general (conectar la vitrina a la base de datos real, con
-  vista de lista/tablero y detalle por item).
+- 🔄 **Hito 4 (en progreso)** — API real contra Azure SQL: lectura (`GET /api/items`,
+  `GET /api/items/{codigo}`) y actualización (`PATCH /api/items/{codigo}`) con historial de
+  cambios en `ActivityLog`. Falta conectar la vitrina a este API (sigue mostrando el HTML
+  estático de Hito 0).
 
 ## Hito 0 — IaC del esqueleto
 
@@ -483,9 +485,126 @@ Excel: `SELECT categoria, prioridad, COUNT(*) ... GROUP BY categoria, prioridad`
 total, con los mismos conteos por categoría y prioridad que la hoja "Resumen" del Excel (por
 ejemplo, `Basis`: 13 items, 6 Alta / 5 Media / 2 Baja — exacto).
 
+## Hito 4 (en progreso) — API de lectura y actualización
+
+Con el Hito 3 cerrado había datos reales en Azure SQL, pero nada que los sirviera todavía.
+Este hito construye el API que la vitrina va a consumir — por ahora, solo el API; la vitrina en
+sí sigue pendiente (ver "Después de este hito").
+
+### Alcance: lectura + actualización, sin crear ni borrar desde la UI
+
+A diferencia de un CRUD completo, este hito se acotó a **Read + Update**: la vitrina va a poder
+listar, filtrar, ver el detalle y editar `estado` / `notas_seguimiento` / `fecha_compromiso` de
+un item — pero no crear ni borrar items desde ahí. Los items nacen del proceso de carga del
+Hito 3 (`db/import-seed.ts`, a partir del Excel real de cada EWA), no de la vitrina.
+
+### Managed functions + contraseña SQL, en vez de Managed Identity
+
+Antes de escribir el primer endpoint se investigó si las *managed functions* de Static Web Apps
+(el mismo modelo del Hito 0/1, sin Function App independiente) soportan **Managed Identity**
+para conectarse a Azure SQL sin guardar contraseña en ningún lado. La respuesta, confirmada
+contra la [documentación oficial de Microsoft](https://learn.microsoft.com/azure/static-web-apps/apis-functions)
+y un [issue de GitHub todavía abierto desde 2020](https://github.com/Azure/static-web-apps/issues/88):
+**no la soportan** — ni system- ni user-assigned. Tampoco Key Vault references ni Durable
+Functions; solo triggers HTTP.
+
+La alternativa ("bring your own functions", un Function App independiente) sí soporta Managed
+Identity, pero es la misma pieza de infraestructura que causó el bloqueo de cuota de VMs en el
+Hito 0 (ver Troubleshooting de ese hito). Para no arriesgarse a repetir ese problema por una
+mejora de seguridad que no es indispensable en un proyecto de portafolio, se optó por **seguir
+con managed functions**, conectándose con el usuario `ewaadmin` + una contraseña guardada como
+Application Setting (`SQL_ADMIN_PASSWORD`, nunca en el código ni en el repo) — el mismo patrón
+de secretos ya usado desde el Hito 1.
+
+### `api/src/db.ts` — el pool de conexión
+
+Un singleton a nivel de módulo: la primera invocación de cualquier endpoint crea el
+`sql.ConnectionPool` y las siguientes, mientras la instancia de la Function siga "caliente", lo
+reutilizan — abrir una conexión nueva en cada request sería lento y, bajo carga, agotaría las
+conexiones que la base serverless permite.
+
+### `GET /api/items` y `GET /api/items/{codigo}`
+
+- `items-list.ts` — lista con filtros opcionales por query string (`?categoria=&estado=&prioridad=`),
+  parametrizados con `.input()` (nunca concatenación de strings), ordenada por prioridad y luego
+  código.
+- `items-detail.ts` — trae un item por `codigo_item`, con un `JOIN` a `EWAs` para incluir
+  `codigo_ewa`/`fecha_desde`/`fecha_hasta`, más los campos de texto largo que la lista omite a
+  propósito (`evidencia`, `actividad_propuesta`, `notas_seguimiento`). 404 si el código no existe.
+
+Ambos con `authLevel: "anonymous"` — la protección real ya la da `staticwebapp.config.json`
+desde el Hito 2 (todo `/api/*` exige el rol `colaborador` antes de que la petición llegue aquí).
+
+### `PATCH /api/items/{codigo}` — la actualización
+
+`items-update.ts` acepta un body JSON parcial con cualquier combinación de `estado`,
+`notas_seguimiento` y `fecha_compromiso` (whitelist fija de columnas editables — nunca se arma
+SQL con nombres de campo que vengan del body). `estado` se valida contra los 5 valores del
+`CHECK` del esquema. Todo corre dentro de una transacción SQL:
+
+1. Lee los valores actuales del item (404 si no existe).
+2. Por cada campo que de verdad cambió de valor (comparado contra lo que ya había), arma el
+   `UPDATE` y prepara una fila de log — si el valor enviado es igual al que ya tenía, no genera
+   ni `UPDATE` ni log, para no ensuciar el historial con "cambios" que no cambiaron nada.
+3. Inserta una fila en `ActivityLog` **por cada campo realmente cambiado** (no una fila por
+   request), con el usuario que hizo el cambio — leído del header `x-ms-client-principal` que
+   Static Web Apps agrega automáticamente a cada request ya autenticada por el login del Hito 2 —
+   y el valor anterior/nuevo de ese campo puntual.
+4. Hace `commit` y devuelve el item ya actualizado.
+
+Verificado en vivo: tras varios `PATCH` de prueba sobre `BAS-01` (cambiando `estado` y
+`notas_seguimiento`, incluyendo mandar `null`), una consulta a `ActivityLog` mostró una fila por
+cada cambio real, con `usuario` igual a la cuenta de Microsoft invitada de verdad (no
+"desconocido"), y los valores anterior/nuevo correctos.
+
+### Bug real encontrado y corregido: timeout de conexión contra la base serverless
+
+Al probar `GET /api/items` por primera vez (en el entorno de vista previa del PR), la respuesta
+fue un 500 sin cuerpo. El log de Application Insights (habilitado en este hito, con su capa
+gratuita) mostró el error real:
+
+```
+ConnectionError: Failed to connect to sql-ewatracker-portal01.database.windows.net:1433 in 15000ms
+```
+
+Azure SQL serverless, si lleva un rato sin uso, se pausa — y Microsoft documenta que puede
+tardar hasta ~60 segundos en "despertar" con la siguiente conexión. El valor por defecto de la
+librería `mssql`/`tedious` para `connectionTimeout` (15 segundos) no alcanzaba para ese caso.
+**Fix en `db.ts`:** subir `connectionTimeout` y `requestTimeout` a 60000 ms. De paso, se corrigió
+un problema relacionado: el `poolPromise` (el singleton del pool) se guardaba en una variable de
+módulo aunque la conexión fallara, dejando esa promesa rechazada cacheada para siempre mientras
+la instancia de la Function siguiera caliente — se agregó un `.catch()` que la resetea a `null`
+para que el siguiente request pueda reintentar limpio.
+
+Un efecto secundario observado al probar el fix: en un intento, el navegador recibió
+`"Backend call failure"` (un error genérico del *gateway* de Static Web Apps, no un 500 con
+detalle) — pero una consulta posterior mostró que el `PATCH` sí se había aplicado del lado del
+servidor. Lección: un timeout del lado del cliente no garantiza que el servidor no haya
+terminado el trabajo: el gateway se cansó de esperar la respuesta, no la conexión SQL en sí.
+
+### Verificación
+
+Como el navegador no puede mandar `PATCH` desde la barra de direcciones, se probó con `fetch()`
+desde la consola de DevTools (aprovechando que el navegador ya trae la sesión autenticada del
+Hito 2, sin manejar tokens a mano):
+
+```js
+fetch('/api/items/BAS-01', {
+  method: 'PATCH',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ estado: 'En progreso', notas_seguimiento: 'texto de prueba' })
+}).then(r => r.json()).then(console.log)
+```
+
+Confirmado en preview y en producción: `GET`/`PATCH` devuelven datos reales, y `ActivityLog`
+registra cada cambio con el usuario correcto. Los datos de prueba se revirtieron a su estado
+original (`Pendiente`, notas en `null`) al terminar, para no dejar basura en el backlog real.
+
 ## Después de este hito
 
-Con el Hito 3 cerrado, hay datos reales y verificados detrás de la app — pero la vitrina
-todavía no los lee; sigue mostrando el HTML estático de antes. El Hito 4 (CRUD + panorama
-general) conecta por fin la vitrina a la base de datos real, con una vista de lista/tablero
-filtrable y una vista de detalle por item.
+El API de Hito 4 (lectura + actualización) ya está en producción y verificado, pero la vitrina
+todavía no lo consume — sigue mostrando el HTML estático del Hito 0. Lo que falta para cerrar
+Hito 4 del todo: reescribir la vitrina para que llame a estos endpoints (lista filtrable por
+categoría/estado/prioridad, vista de detalle por item, edición de estado/notas). Después de eso,
+la puerta queda abierta para Hito 5 en adelante (por ejemplo, gráficas de avance por mes usando
+`ActivityLog` como fuente).
