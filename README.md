@@ -13,8 +13,20 @@ de Azure/SAP BTP. Ver `../Roadmap EWA Tracker Cloud.cd` para el plan completo (F
   quien tú invites explícitamente — sin gastar un centavo del plan Free.
 - ✅ **Hito 3** — modelo de datos: las 4 tablas reales creadas en Azure SQL, con el backlog real
   de Cuprum cargado y verificado (48 items).
-- ⏭️ Próximo: Hito 4 — CRUD + panorama general (conectar la vitrina a la base de datos real, con
-  vista de lista/tablero y detalle por item).
+- ✅ **Hito 4** — API real contra Azure SQL (lectura, actualización, historial de cambios en
+  `ActivityLog`) y la vitrina ya conectada a él: panorama, filtros, buscador y edición
+  (estado, persona responsable, notas, fecha de compromiso) todos con datos reales.
+- ✅ **Hito 5** — gráficas y reportes de actividad: `ActivityLog` ahora se ve, no solo se guarda.
+  Gráfica de actividad por mes/categoría, informe mensual con el detalle campo por campo de cada
+  item, y dos bugs reales de la vitrina encontrados y corregidos en el camino.
+- ✅ **Hito 6** — panel de navegación: la vitrina se reorganiza en dos páginas (Vitrina / Reporteo)
+  dentro de la misma app, sin recargar, más filtros de categoría/item en el informe.
+- ✅ **Hito 7** — notas de seguimiento como bitácora (tabla `NotasSeguimiento`, ya no un campo que
+  se sobreescribe) y máquina de estados sobre `Items.estado` (Pendiente es irreversible una vez que
+  se sale de ahí; Cancelado/Finalizado quedan terminales). El informe mensual se rediseñó como
+  "Avance de items": una foto del estado actual de cada item en seguimiento, no un log por mes.
+- ⏭️ Próximo: por definir (candidatos: exportar "Avance de items" a documento, autorización por
+  persona responsable, ingesta de reportes EWA semanales, deduplicación de items repetidos).
 
 ## Hito 0 — IaC del esqueleto
 
@@ -483,9 +495,384 @@ Excel: `SELECT categoria, prioridad, COUNT(*) ... GROUP BY categoria, prioridad`
 total, con los mismos conteos por categoría y prioridad que la hoja "Resumen" del Excel (por
 ejemplo, `Basis`: 13 items, 6 Alta / 5 Media / 2 Baja — exacto).
 
+## Hito 4 — API real + vitrina conectada
+
+Con el Hito 3 cerrado había datos reales en Azure SQL, pero nada que los sirviera todavía. Este
+hito construye el API y reescribe la vitrina para que lo consuma — de HTML estático con datos
+embebidos a una app que lee y escribe contra la base de datos real.
+
+### Alcance: lectura + actualización, sin crear ni borrar desde la UI
+
+A diferencia de un CRUD completo, este hito se acotó a **Read + Update**: la vitrina lista,
+filtra, muestra el detalle y edita `estado` / `dueno_seguimiento` (persona responsable) /
+`notas_seguimiento` / `fecha_compromiso` de un item — pero no crea ni borra items desde ahí. Los
+items nacen del proceso de carga del Hito 3 (`db/import-seed.ts`, a partir del Excel real de cada
+EWA), no de la vitrina.
+
+### Managed functions + contraseña SQL, en vez de Managed Identity
+
+Antes de escribir el primer endpoint se investigó si las *managed functions* de Static Web Apps
+(el mismo modelo del Hito 0/1, sin Function App independiente) soportan **Managed Identity**
+para conectarse a Azure SQL sin guardar contraseña en ningún lado. La respuesta, confirmada
+contra la [documentación oficial de Microsoft](https://learn.microsoft.com/azure/static-web-apps/apis-functions)
+y un [issue de GitHub todavía abierto desde 2020](https://github.com/Azure/static-web-apps/issues/88):
+**no la soportan** — ni system- ni user-assigned. Tampoco Key Vault references ni Durable
+Functions; solo triggers HTTP.
+
+La alternativa ("bring your own functions", un Function App independiente) sí soporta Managed
+Identity, pero es la misma pieza de infraestructura que causó el bloqueo de cuota de VMs en el
+Hito 0 (ver Troubleshooting de ese hito). Para no arriesgarse a repetir ese problema por una
+mejora de seguridad que no es indispensable en un proyecto de portafolio, se optó por **seguir
+con managed functions**, conectándose con el usuario `ewaadmin` + una contraseña guardada como
+Application Setting (`SQL_ADMIN_PASSWORD`, nunca en el código ni en el repo) — el mismo patrón
+de secretos ya usado desde el Hito 1.
+
+### `api/src/db.ts` — el pool de conexión
+
+Un singleton a nivel de módulo: la primera invocación de cualquier endpoint crea el
+`sql.ConnectionPool` y las siguientes, mientras la instancia de la Function siga "caliente", lo
+reutilizan — abrir una conexión nueva en cada request sería lento y, bajo carga, agotaría las
+conexiones que la base serverless permite.
+
+### `GET /api/items` y `GET /api/items/{codigo}`
+
+- `items-list.ts` — lista con filtros opcionales por query string (`?categoria=&estado=&prioridad=`),
+  parametrizados con `.input()` (nunca concatenación de strings), ordenada por prioridad y luego
+  código. Incluye `sistema` (`JOIN` hasta `Sistemas`) para que el tile "Sistema" del panorama sea
+  dato real, no algo fijo en el HTML.
+- `items-detail.ts` — trae un item por `codigo_item`, con un `JOIN` a `EWAs` para incluir
+  `codigo_ewa`/`fecha_desde`/`fecha_hasta`, más los campos de texto largo que la lista omite a
+  propósito (`evidencia`, `actividad_propuesta`, `notas_seguimiento`). 404 si el código no existe.
+
+Ambos con `authLevel: "anonymous"` — la protección real ya la da `staticwebapp.config.json`
+desde el Hito 2 (todo `/api/*` exige el rol `colaborador` antes de que la petición llegue aquí).
+
+### `PATCH /api/items/{codigo}` — la actualización
+
+`items-update.ts` acepta un body JSON parcial con cualquier combinación de `estado`,
+`dueno_seguimiento`, `notas_seguimiento` y `fecha_compromiso` (whitelist fija de columnas
+editables — nunca se arma SQL con nombres de campo que vengan del body). `estado` se valida
+contra los 5 valores del `CHECK` del esquema. Todo corre dentro de una transacción SQL:
+
+1. Lee los valores actuales del item (404 si no existe).
+2. Por cada campo que de verdad cambió de valor (comparado contra lo que ya había), arma el
+   `UPDATE` y prepara una fila de log — si el valor enviado es igual al que ya tenía, no genera
+   ni `UPDATE` ni log, para no ensuciar el historial con "cambios" que no cambiaron nada.
+3. Inserta una fila en `ActivityLog` **por cada campo realmente cambiado** (no una fila por
+   request), con el usuario que hizo el cambio — leído del header `x-ms-client-principal` que
+   Static Web Apps agrega automáticamente a cada request ya autenticada por el login del Hito 2 —
+   y el valor anterior/nuevo de ese campo puntual.
+4. Hace `commit` y devuelve el item ya actualizado.
+
+Verificado en vivo: tras varios `PATCH` de prueba sobre `BAS-01` (cambiando `estado` y
+`notas_seguimiento`, incluyendo mandar `null`), una consulta a `ActivityLog` mostró una fila por
+cada cambio real, con `usuario` igual a la cuenta de Microsoft invitada de verdad (no
+"desconocido"), y los valores anterior/nuevo correctos.
+
+### "Persona responsable": reusar `dueno_seguimiento`, no una columna nueva
+
+Al usar la vitrina por primera vez con datos reales, surgió la necesidad de poder asignar quién
+da seguimiento a cada item. En vez de agregar una columna nueva, se aprovechó que el esquema ya
+tenía `dueno_seguimiento` — poblado desde el Excel del Hito 3 pero hasta entonces de solo
+lectura, y con varios items ya trayendo literalmente `"(por asignar)"` como valor. Se agregó a la
+whitelist de campos editables del `PATCH`, con su propio registro en `ActivityLog` cuando cambia.
+
+Pensado a futuro (no en este hito): la persona responsable eventualmente necesitará su propia
+cuenta de Microsoft con el rol `colaborador`, y la autorización debería restringirse a que cada
+quien solo pueda editar los items que tiene asignados. Por ahora `dueno_seguimiento` es texto
+libre, sin ligarlo todavía a una cuenta real ni restringir quién puede editar qué — es
+simplemente una forma de dejar registrado que un item ya tiene dueño.
+
+### Bug real encontrado y corregido: timeout de conexión contra la base serverless
+
+Al probar `GET /api/items` por primera vez (en el entorno de vista previa del PR), la respuesta
+fue un 500 sin cuerpo. El log de Application Insights (habilitado en este hito, con su capa
+gratuita) mostró el error real:
+
+```
+ConnectionError: Failed to connect to sql-ewatracker-portal01.database.windows.net:1433 in 15000ms
+```
+
+Azure SQL serverless, si lleva un rato sin uso, se pausa — y Microsoft documenta que puede
+tardar hasta ~60 segundos en "despertar" con la siguiente conexión. El valor por defecto de la
+librería `mssql`/`tedious` para `connectionTimeout` (15 segundos) no alcanzaba para ese caso.
+**Fix en `db.ts`:** subir `connectionTimeout` y `requestTimeout` a 60000 ms. De paso, se corrigió
+un problema relacionado: el `poolPromise` (el singleton del pool) se guardaba en una variable de
+módulo aunque la conexión fallara, dejando esa promesa rechazada cacheada para siempre mientras
+la instancia de la Function siguiera caliente — se agregó un `.catch()` que la resetea a `null`
+para que el siguiente request pueda reintentar limpio.
+
+Un efecto secundario observado al probar el fix: en un intento, el navegador recibió
+`"Backend call failure"` (un error genérico del *gateway* de Static Web Apps, no un 500 con
+detalle) — pero una consulta posterior mostró que el `PATCH` sí se había aplicado del lado del
+servidor. Lección: un timeout del lado del cliente no garantiza que el servidor no haya
+terminado el trabajo: el gateway se cansó de esperar la respuesta, no la conexión SQL en sí.
+
+### Verificación del API (vía DevTools)
+
+Como el navegador no puede mandar `PATCH` desde la barra de direcciones, se probó con `fetch()`
+desde la consola de DevTools (aprovechando que el navegador ya trae la sesión autenticada del
+Hito 2, sin manejar tokens a mano):
+
+```js
+fetch('/api/items/BAS-01', {
+  method: 'PATCH',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ estado: 'En progreso', notas_seguimiento: 'texto de prueba' })
+}).then(r => r.json()).then(console.log)
+```
+
+Confirmado en preview y en producción: `GET`/`PATCH` devuelven datos reales, y `ActivityLog`
+registra cada cambio con el usuario correcto. Los datos de prueba se revirtieron a su estado
+original (`Pendiente`, notas en `null`) al terminar, para no dejar basura en el backlog real.
+
+### La vitrina (`web/index.html`) — de HTML estático a app conectada
+
+Reescrita para consumir el API en vez de traer los datos embebidos:
+
+- **Carga inicial:** `fetch('/api/items')` al abrir la página, con un mensaje de "Cargando…" que
+  avisa que el primer request puede tardar si la base de datos estaba dormida (mismo fenómeno del
+  bug de timeout, explicado del lado del usuario en vez de solo del código).
+- **Detalle bajo demanda (*lazy*):** `GET /api/items` no trae `evidencia`/`actividad_propuesta` a
+  propósito, así que la primera vez que se abre el detalle de una fila se hace un segundo
+  `fetch` puntual a `GET /api/items/{codigo}` — una sola vez por item, con el resultado cacheado
+  en memoria (`DETAIL_CACHE`) para no repetirlo si se cierra y se vuelve a abrir la misma fila.
+- **Edición real:** el detalle expandido trae un formulario (estado, persona responsable, notas,
+  fecha de compromiso) con un botón "Guardar cambios" que manda el `PATCH`. Al guardar, se
+  actualiza tanto esa fila como los stat tiles, el gráfico por categoría y los tiles de prioridad
+  — por si el cambio afecta esos totales (por ejemplo, marcar como "Finalizado" un item de
+  prioridad Alta).
+- **Bug propio detectado y corregido antes de mergear:** si el usuario guardaba sin cambios
+  reales, `items-update.ts` responde solo con un mensaje (sin los campos del item, ver arriba) —
+  el primer borrador del código de la vitrina intentaba leer `estado`/`fecha_compromiso` de esa
+  respuesta igual, lo que habría sobrescrito esos valores en pantalla con `undefined`. Se corrigió
+  antes de desplegarlo, chequeando explícitamente si la respuesta trae un item real.
+
+Verificado en vivo (preview y producción): carga del panorama con los 48 items reales, filtros y
+buscador (incluyendo búsqueda por persona responsable), apertura de detalle con carga diferida, y
+guardado de cambios reflejado de inmediato en pantalla.
+
+## Hito 5 — Gráficas y reportes de actividad (`ActivityLog`)
+
+Con Hito 4 cerrado, `ActivityLog` ya llevaba varios cambios reales guardados (incluida la
+asignación real de Roberto Ortiz a `ABAP-11`), pero esa información solo era consultable a mano
+en el Query Editor del Portal. Este hito la pone a la vista, en dos formas distintas: una gráfica
+agregada y un informe mensual con el detalle por item.
+
+### Decisiones antes de escribir código
+
+Dos preguntas abiertas se resolvieron antes de tocar el API:
+
+- **Qué métrica graficar.** Se consideraron "items finalizados por mes" contra "actividad por
+  mes/categoría" (cualquier cambio de campo, no solo llegar a `Finalizado`). Se eligió la segunda:
+  con tan pocos items reales todavía, contar solo finalizaciones habría dado una gráfica casi vacía
+  por meses.
+- **Limpiar los datos de prueba de `ActivityLog` antes de graficar.** Al revisar las 8 filas que
+  había (`javiermp2002@hotmail.com` y pruebas de PATCH de sesiones anteriores, mezcladas con la
+  asignación real de Roberto Ortiz), se decidió borrar la tabla completa —**incluida la fila
+  real**— para arrancar la gráfica desde cero y no tener que distinguir a mano cuáles filas eran
+  reales: `DELETE FROM ActivityLog;`. La asignación vigente de Roberto Ortiz en
+  `Items.dueno_seguimiento` no se tocó — el borrado es solo del historial, no del estado actual.
+
+### `GET /api/activity-summary` — la gráfica
+
+`activity-summary.ts` agrega `ActivityLog` (unido a `Items` por `categoria`) agrupado por mes y
+categoría, contando cualquier cambio de campo:
+
+```sql
+SELECT FORMAT(al.[timestamp], 'yyyy-MM') AS mes, i.categoria, COUNT(*) AS cantidad
+FROM ActivityLog al
+JOIN Items i ON i.id = al.item_id
+GROUP BY FORMAT(al.[timestamp], 'yyyy-MM'), i.categoria
+ORDER BY mes, i.categoria
+```
+
+La vitrina arma con esas filas planas una barra apilada por mes (SVG a mano, sin librería —
+mismo criterio que el resto de la vitrina), siguiendo el skill de dataviz del proyecto: paleta de
+categoría validada con su script de checks (pasa en modo claro y oscuro; 3 de los 6 colores dan
+un `WARN` de contraste contra el fondo, lo que obliga a no depender solo del color — de ahí que la
+gráfica siempre traiga leyenda, tooltip al pasar el mouse/foco, y un botón "Ver como tabla" que
+muestra los mismos datos en texto), segmentos con 2px de separación y esquinas redondeadas solo en
+el tope de cada barra, y el total del mes como única etiqueta directa.
+
+### Dos bugs reales de la vitrina, encontrados al probar la gráfica
+
+Ninguno de los dos es nuevo de este hito — ya estaban en la vitrina desde el Hito 4 — pero salieron
+a la luz al reutilizar el color de categoría para la gráfica nueva:
+
+1. **`light-dark()` de CSS no se resolvía en el navegador del usuario.** El color de cada barra se
+   fijaba con `background: light-dark(#2a78d6, #3987e5)` directo en el `style` del elemento. En
+   algunos navegadores/webviews esa función CSS no se reconoce, y el navegador descarta toda la
+   declaración como inválida — el elemento se queda sin fondo (transparente), sin ningún aviso
+   visible. Afectaba las barras de "Por categoría", el punto de color de la tabla del backlog, y
+   los dos usos nuevos de la gráfica. **Fix:** resolver el color en JavaScript con
+   `window.matchMedia('(prefers-color-scheme: dark)')` — el mismo mecanismo, mucho más viejo y
+   soportado, que ya usaban `PRIORITY_META`/`ESTADO_COLOR` (por eso esos sí se veían bien). Un solo
+   hex fijo por render, en vez de dejarle la resolución a una función CSS de 2023-2024.
+2. **`.bar-fill` es un `<span>`, y un `<span>` es `display: inline` por defecto — los elementos
+   inline ignoran `width` y `height`.** Ese `width: 31%` que sí se calculaba bien (verificado en
+   DevTools) nunca se dibujaba: el elemento tenía tamaño cero, invisible. Lo que se veía en pantalla
+   era solo el fondo gris de `.bar-track`, el contenedor — por eso todas las barras se veían del
+   mismo largo, sin relación con el conteo real. Diagnosticado inspeccionando el DOM en vivo (ancho
+   correcto en el atributo `style`, pero sin rastro visual) antes de sospechar de un problema de
+   layout en vez de datos. **Fix:** `display: block;` en `.bar-fill`.
+
+Los dos se confirmaron en el preview con datos reales — "Por categoría" mostrando a Basis (13) en
+azul con la barra más larga y a Integraciones/UX (4) en verde con la más corta, proporcional y
+coloreado correctamente.
+
+### `GET /api/activity-detail` — el informe mensual
+
+Después de ver la gráfica funcionando, surgió una necesidad más concreta: un informe mensual del
+avance por item, para reportar hacia Cuprum/Accenture. Tres decisiones (por `AskUserQuestion`):
+vista dentro de la vitrina primero (exportar a documento queda para después), con **todos** los
+campos que cambiaron (no solo estado), y solo los items que tuvieron actividad ese mes (no los 48
+completos).
+
+`activity-detail.ts` no agrega nada — regresa cada fila de `ActivityLog` tal cual, unida a `Items`
+para categoría y hallazgo; la vitrina agrupa por mes (con un `<select>`) y luego por item del lado
+del cliente. Cada campo cambiado se muestra como "Campo: valor anterior (tachado) → valor nuevo",
+con quién lo hizo y cuándo.
+
+Verificado en vivo, editando de verdad `ABAP-01` (estado, responsable, notas y fecha en un solo
+guardado) y un item de Basis: el informe de agosto 2026 mostró 8 cambios en Basis y 4 en
+ABAP/Desarrollo — que al principio parecía un conteo raro ("¿por qué sube de 1 en 1 si edité un
+item?"), hasta confirmar que es el diseño esperado: **una fila de `ActivityLog` por cada campo que
+realmente cambió, no una por cada clic en "Guardar"** — 2 items de Basis × 4 campos = 8, 1 item de
+ABAP × 4 campos = 4. Coincide exactamente con la métrica que se eligió para la gráfica.
+
+### Nota de flujo: un PR se mergeó a medio camino
+
+Al llegar a este punto se mergeó el PR de la gráfica (con los dos bugs ya corregidos) directo a
+`main`, y el informe mensual se siguió desarrollando y empujando sobre la misma rama
+(`hito4-actividad-por-mes`) sin darse cuenta de que el PR asociado ya estaba cerrado. GitHub no
+reabre un PR mergeado solo porque le sigas haciendo `push` — y como el ambiente de preview de
+Azure Static Web Apps se destruye cuando el PR se cierra, el link de preview que se venía usando
+dejó de reflejar cambios nuevos. Solución: abrir un **PR nuevo** desde la misma rama hacia `main`
+— con los commits que ya estaban en producción sin diferencia, solo trae el commit pendiente — lo
+que genera un ambiente de preview nuevo. Lección: confirmar en la lista de Pull Requests (no solo
+en los workflows de Actions) si un PR sigue abierto antes de asumir que un `push` va a actualizar
+su preview.
+
+## Hito 6 — Reorganizar la app: panel de navegación
+
+Con Hito 5 cerrado, la vitrina mezclaba backlog, gráficas e informe en una sola pantalla larga.
+En una conversación sobre el uso real del proceso (los reportes EWA se bajan **semanalmente** de
+`me.sap.com`, no una sola vez como el seed de Hito 3) salió una lista de 7 mejoras pendientes; este
+hito ataca la primera: separar "ver el backlog" de "reportar avance", sin tocar nada del API.
+
+- Un panel lateral (`.sidebar`) con dos botones, "Vitrina" y "Reporteo", que alternan
+  `style.display` entre `#page-vitrina` (panorama, categoría/prioridad, backlog completo) y
+  `#page-reporteo` (la gráfica de actividad y el informe mensual, movidos aquí desde donde vivían
+  sueltos en Hito 5) — client-side puro, sin recargar la página ni volver a pedir datos al
+  cambiar de página.
+- Filtros de categoría e ID de item agregados a la barra del informe mensual, preservando la
+  selección al recargar.
+
+Verificado en vivo en preview (`-10`): sidebar funcionando, panorama y barras de categoría
+coloreadas y proporcionales (los bugs de Hito 5 seguían corregidos), Reporteo mostrando gráfica e
+informe correctamente.
+
+## Hito 7 — Notas de seguimiento como bitácora + máquina de estados
+
+Este hito arrancó como un ajuste chico de UI ("colapsar el campo de notas detrás de un botón +")
+y terminó siendo el más grande del proyecto hasta ahora: en cuanto se armó esa primera versión,
+quedó claro que el problema de fondo no era visual — `notas_seguimiento` era un solo campo de
+texto que **se sobreescribía** en cada guardado, sin dejar rastro de las notas anteriores. Esa
+primera versión (un `<textarea>` colapsado detrás de "+ Agregar nueva nota") se descartó antes de
+mergear, a favor de lo que sigue.
+
+### `NotasSeguimiento`: una tabla, no un campo
+
+```sql
+CREATE TABLE NotasSeguimiento (
+    id          INT IDENTITY(1,1) PRIMARY KEY,
+    item_id     INT NOT NULL REFERENCES Items(id),
+    usuario     VARCHAR(100) NOT NULL,
+    fecha       DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    comentario  NVARCHAR(500) NOT NULL
+);
+```
+
+Uno-a-muchos con `Items`: cada nota es su propia fila, nunca se pisa con la siguiente. El límite
+de 500 caracteres (no 100, la primera cifra que se consideró) salió de revisar una nota real ya
+guardada de 121 caracteres — 100 la habría truncado. `Items.notas_seguimiento` **no se borró** de
+la base de datos (tumbar una columna no se puede deshacer sin restaurar un backup) pero dejó de
+leerse y escribirse desde el API — es dato muerto a propósito, documentado como tal en
+`db/schema.sql`.
+
+`db/migration-hito7-notas-seguimiento.sql` crea la tabla y migra las notas que ya existían en la
+columna vieja, con un detalle importante: en vez de migrar a mano los items que "se recordaban"
+con nota, la migración es **data-driven** — toma cualquier item con texto en `notas_seguimiento` y
+le busca en `ActivityLog` la última vez que ese campo cambió, para heredar el usuario y la fecha
+reales (no un valor genérico de "migración"). Al correrla, salieron 3 filas, no las 2 que se
+esperaban — `BAS-02` también tenía una nota que nadie había mencionado. Verificado con un
+`SELECT` directo contra la tabla nueva, con usuario y fechas reales.
+
+### Los endpoints
+
+- `GET /api/items/{codigo}/notas` y `POST /api/items/{codigo}/notas` (`notas-list.ts` /
+  `notas-add.ts`) — listar y agregar notas de un item.
+- `GET /api/notas` (`notas-list-todas.ts`) — todas las notas de todos los items de una sola vez,
+  con su `codigo_item`, para no tener que pedirlas item por item al armar el reporte de avance.
+- Cada `POST` de nota también inserta una fila en `ActivityLog` (`campo_cambiado =
+  'nota_seguimiento'`, usando la columna `comentario` que la tabla ya tenía desde Hito 3 pero
+  nunca se había usado) — así la nota aparece sola en la gráfica de actividad, sin tocar ese
+  endpoint.
+
+### Máquina de estados sobre `Items.estado`
+
+En paralelo, surgió la necesidad de reglas de negocio sobre `estado` que hasta entonces no
+existían (cualquier transición era válida). Las reglas, fijadas en conversación:
+
+- Un item nunca puede volver a **Pendiente** una vez que salió de ahí — pero desde Pendiente sí
+  puede pasar directo a cualquier otro estado, sin obligar a pasar por "En progreso" primero.
+- **Cancelado** y **Finalizado** son terminales: el item queda de solo lectura por completo (ni
+  estado, ni responsable, ni fecha, ni notas nuevas).
+- Agregar una nota, o poner fecha de compromiso, a un item que sigue Pendiente lo pasa **solo a
+  "En progreso"** — automático, sin que nadie toque el selector de Estado. Ojo con un caso borde
+  que no era obvio a primera vista: esta auto-transición solo dispara si el item sigue en
+  Pendiente — agregarle una nota a un item ya **Bloqueado** no lo desbloquea solo.
+
+Las tres reglas se aplican en `items-update.ts` y `notas-add.ts` **del lado del servidor**
+(rechazo con 400 o 409), no solo escondiendo botones en la vitrina — una pestaña vieja abierta o
+una llamada directa al API no puede saltárselas. La vitrina además quita "Pendiente" del
+`<select>` de Estado en cuanto deja de ser el valor actual, y deshabilita todo el formulario con
+un aviso cuando el item ya es terminal.
+
+### El informe mensual se convierte en "Avance de items"
+
+El informe campo-por-campo de Hito 5 (con "antes → después" y filtro de mes) resultó confuso una
+vez que había notas de por medio: mezclaba una auditoría con una vista de progreso. Se separaron:
+la gráfica "Actividad por mes" **no cambió**, sigue siendo el log agregado; lo que era "Informe
+mensual" se rediseñó como **"Avance de items"** — sin selector de mes, solo los items que ya
+salieron de Pendiente, con la cabecera (estado, responsable, fecha de compromiso) separada
+visualmente de la bitácora de notas (fecha + texto, sin decir quién la escribió, más reciente
+primero). `GET /api/activity-detail` no se borró — solo dejó de alimentar esta pantalla; queda
+disponible para cuando se aborde "exportar el avance a documento".
+
+Todo verificado en vivo por Javi en el preview: migración con datos reales, agregar una nota
+nueva y verla aparecer sin perder las anteriores, el cambio automático de estado reflejado en la
+tabla y el panorama, el candado de items terminales, y el reporte "Avance de items" mostrando
+cabecera + notas correctamente.
+
 ## Después de este hito
 
-Con el Hito 3 cerrado, hay datos reales y verificados detrás de la app — pero la vitrina
-todavía no los lee; sigue mostrando el HTML estático de antes. El Hito 4 (CRUD + panorama
-general) conecta por fin la vitrina a la base de datos real, con una vista de lista/tablero
-filtrable y una vista de detalle por item.
+Con Hito 7 cerrado, el tracker ya tiene una bitácora real de seguimiento y reglas de negocio sobre
+el ciclo de vida de un item — dos piezas que el uso semanal real del proceso EWA (bajar el reporte
+de `me.sap.com`, revisar avances con Cuprum/Accenture) venía pidiendo. De la lista original de 7
+mejoras, quedan pendientes:
+
+- **Exportar "Avance de items" a documento** (Word/Excel/PDF), para enviarlo sin depender de que
+  alguien abra la vitrina.
+- **Autorización por persona responsable**: hoy `dueno_seguimiento` es texto libre; el siguiente
+  paso natural es ligarlo a una cuenta real de Microsoft con rol `colaborador` (empezando por
+  invitar a Carlos Sánchez como colaborador) y restringir la edición de cada item a quien lo tiene
+  asignado.
+- **Ingesta semanal de reportes EWA**: hoy la base solo refleja el seed de Hito 3 (una carga
+  única); falta el formato estándar de CSV y la pantalla de carga dentro de la app.
+- **Detalle enriquecido de items** desde el archivo/blob del EWA original.
+- **Deduplicación de items repetidos** entre reportes semanales consecutivos.
+- **Exportar el backlog a CSV/Excel** desde la vitrina.
+- Seguir explorando TypeScript con mini-laboratorios (tema aparte, ya conversado, para retomar
+  cuando convenga).
