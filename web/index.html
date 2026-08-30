@@ -1017,7 +1017,7 @@
       if (fPrio && d.prioridad !== fPrio) return false;
       if (fEstado && d.estado !== fEstado) return false;
       if (q) {
-        const hay = (d.codigo_item + ' ' + d.hallazgo + ' ' + (d.dueno_seguimiento||'') + ' ' + (d.ejecutor||'')).toLowerCase();
+        const hay = (d.codigo_item + ' ' + d.hallazgo + ' ' + (d.dueno_seguimiento||'')).toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -1109,7 +1109,6 @@
         '<div class="detail-block"><h4>Actividad propuesta</h4><p>' + escapeHtml(d.actividad_propuesta) + '</p></div>' +
       '</div>' +
       '<div class="detail-meta">' +
-        '<span><strong>Ejecutor:</strong> ' + escapeHtml(d.ejecutor) + '</span>' +
         '<span><strong>Aprobador:</strong> ' + escapeHtml(d.aprobador) + '</span>' +
         '<span><strong>EWA:</strong> ' + escapeHtml(d.codigo_ewa) + '</span>' +
       '</div>' +

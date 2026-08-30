@@ -34,7 +34,7 @@ CREATE TABLE Items (
     prioridad            VARCHAR(10) NOT NULL
         CHECK (prioridad IN ('Alta', 'Media', 'Baja')),
     dueno_seguimiento    VARCHAR(100) NULL,
-    ejecutor             VARCHAR(100) NULL,
+    ejecutor             VARCHAR(100) NULL,  -- ver Hito 8: dejó de usarse, fusionado en dueno_seguimiento
     aprobador            VARCHAR(100) NULL,
     estado               VARCHAR(20) NOT NULL DEFAULT 'Pendiente'
         CHECK (estado IN ('Pendiente', 'En progreso', 'Finalizado', 'Bloqueado', 'Cancelado')),
@@ -80,3 +80,14 @@ CREATE TABLE NotasSeguimiento (
     comentario  NVARCHAR(500) NOT NULL
 );
 CREATE INDEX IX_NotasSeguimiento_ItemId ON NotasSeguimiento(item_id);
+
+-- Hito 8 — ejecutor y dueno_seguimiento resultaron ser el mismo concepto en
+-- la práctica de Javi (quien da seguimiento es quien dispara la acción,
+-- sin importar si la ejecuta él mismo, otra persona o una entidad como
+-- "Basis Accenture"): se fusionan en un solo campo editable, dueno_seguimiento.
+-- Igual que con notas_seguimiento en el Hito 7, la columna ejecutor se deja
+-- en la tabla (no se borra: tumbar una columna no se puede deshacer sin
+-- restaurar un backup) pero deja de leerse/escribirse desde la API. Ver
+-- db/migration-hito8-fusion-responsable.sql para el script que rescata,
+-- de forma data-driven, los valores de ejecutor que dueno_seguimiento
+-- todavía no tenía.

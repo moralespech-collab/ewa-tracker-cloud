@@ -6,6 +6,10 @@
 // en su propia tabla y se piden aparte con GET /api/items/{codigo}/notas
 // (ver notas-list.ts) — no tiene sentido traerlas aquí "por si acaso" cuando
 // además pueden ser varias, no una sola.
+//
+// Hito 8: ejecutor también salió de esta respuesta — se fusionó en
+// dueno_seguimiento (ver comentario en schema.sql y la migración del
+// Hito 8). aprobador sigue aquí porque es un rol distinto, no se tocó.
 
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import sql from "mssql";
@@ -23,7 +27,7 @@ export async function itemsDetail(
     .input("codigo", sql.VarChar(20), codigo)
     .query(`
       SELECT i.codigo_item, i.categoria, i.hallazgo, i.evidencia, i.actividad_propuesta,
-             i.prioridad, i.dueno_seguimiento, i.ejecutor, i.aprobador, i.estado,
+             i.prioridad, i.dueno_seguimiento, i.aprobador, i.estado,
              i.fecha_compromiso,
              e.codigo_ewa, e.fecha_desde, e.fecha_hasta
       FROM Items i
