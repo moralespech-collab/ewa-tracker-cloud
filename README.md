@@ -25,6 +25,11 @@ de Azure/SAP BTP. Ver `../Roadmap EWA Tracker Cloud.cd` para el plan completo (F
   se sobreescribe) y máquina de estados sobre `Items.estado` (Pendiente es irreversible una vez que
   se sale de ahí; Cancelado/Finalizado quedan terminales). El informe mensual se rediseñó como
   "Avance de items": una foto del estado actual de cada item en seguimiento, no un log por mes.
+- ✅ **Hito 8** — `ejecutor` y `dueno_seguimiento` resultaron ser el mismo concepto en la práctica;
+  se fusionaron en un solo campo editable (`dueno_seguimiento`), con migración de datos para no
+  perder las asignaciones que venían del Excel original.
+- ✅ **Hito 9** — botón "Descargar CSV" en la vitrina: exporta el backlog (respetando los filtros
+  activos) tal como se ve en pantalla, sin necesidad de un endpoint nuevo.
 - ⏭️ Próximo: por definir (candidatos: exportar "Avance de items" a documento, autorización por
   persona responsable, ingesta de reportes EWA semanales, deduplicación de items repetidos).
 
@@ -856,12 +861,107 @@ nueva y verla aparecer sin perder las anteriores, el cambio automático de estad
 tabla y el panorama, el candado de items terminales, y el reporte "Avance de items" mostrando
 cabecera + notas correctamente.
 
+## Hito 8 — Fusionar `ejecutor` en `dueno_seguimiento`
+
+Un ajuste chico, pero que valía la pena documentar porque el origen del problema no estaba en el
+código de este proyecto, sino en un dato heredado que nadie había cuestionado.
+
+### Cómo se detectó
+
+Revisando el detalle de un item en la vitrina, Javi notó que el bloque de cabecera mostraba
+**"Ejecutor: Basis (Javier)"** como dato fijo, y justo debajo, en el formulario de seguimiento,
+**"Persona responsable: Javier Morales"** como campo editable — la misma persona, dos veces, con
+dos formatos de texto distintos. Su pregunta fue directa: *"para mí el ejecutor y el responsable
+es el mismo campo, ¿en qué punto nos equivocamos?"*
+
+### De dónde salió la separación
+
+Rastreando el origen: `ejecutor`, `aprobador` y `dueno_seguimiento` no se diseñaron para este
+proyecto — los tres ya venían como columnas separadas en el Excel real de Cuprum
+(`Cuprum_PS4_EWA_Backlog.xlsx`, hoja "Backlog EWA", columnas "Ejecutor propuesto" y "Aprobador").
+El Hito 3 los importó tal cual, sin preguntarse si esas columnas representaban roles realmente
+distintos en el proceso de Javi o si eran remanentes de una plantilla genérica. El Hito 4, al
+construir la edición de seguimiento, escogió `dueno_seguimiento` como el campo editable por su
+nombre literal ("dueño del seguimiento") — pero nunca se reconcilió con `ejecutor`, que se quedó
+como dato de solo lectura del import original.
+
+Javi confirmó que, en su operación real, **responsable y ejecutor son el mismo concepto**: quien
+da seguimiento es quien dispara la acción (una transacción, un ticket, un caso con SAP), sin
+importar quién la ejecuta materialmente en el sistema. También aclaró el rango real de valores que
+ese campo necesita: puede estar vacío, ser una persona, cambiar de una persona a otra a lo largo
+del tiempo, o ser una entidad como "Basis Accenture" o "SAP ECS" (mucho menos común en Basis, casi
+todo recae en él o en Carlos Sánchez, más raro en Roberto/Ricardo Ortiz, rarísimo en David
+Navarro) — y que debe seguir siendo editable desde la vitrina salvo cuando el item ya es terminal.
+
+### La solución no necesitó lógica nueva
+
+Lo notable: `dueno_seguimiento` ya cumplía **todo** lo anterior sin tocar una línea de lógica —
+ya es texto libre sin `CHECK` que lo restrinja, ya acepta `NULL`, ya es editable desde la vitrina,
+y ya queda bloqueado en Cancelado/Finalizado por la máquina de estados del Hito 7. El trabajo real
+fue de limpieza, no de construcción:
+
+- **`db/migration-hito8-fusion-responsable.sql`** — para cada item donde `dueno_seguimiento`
+  seguía vacío (nunca se editó desde el import de Hito 3) pero `ejecutor` sí traía un valor real,
+  copia ese valor a `dueno_seguimiento`, así no se pierde la asignación original del Excel. Si un
+  item ya tenía `dueno_seguimiento` editado a mano (como Roberto Ortiz en ABAP-11), ese valor gana
+  — no se pisa un dato editado con el valor viejo del Excel. A diferencia de la migración de notas
+  del Hito 7, esta **no genera fila en `ActivityLog`**: ahí sí existía un usuario y una fecha
+  reales (tomados del historial de ediciones por API); aquí `ejecutor` nunca se editó por la API,
+  llegó directo de un import que tampoco quedó loggeado — inventar un usuario/fecha habría sido un
+  dato falso en el historial.
+- `ejecutor` salió de las respuestas de `items-list.ts`, `items-detail.ts` e `items-update.ts`, y
+  del bloque "Ejecutor:" en el detalle de la vitrina (solo queda "Aprobador", que sigue siendo un
+  rol distinto y no se tocó) y del índice de búsqueda del buscador.
+- La columna `Items.ejecutor` se queda en la tabla, sin borrarse — mismo criterio que
+  `notas_seguimiento` en el Hito 7: tumbar una columna no se puede deshacer sin restaurar un
+  backup. `db/import-seed.ts` (el script de carga del Hito 3, ya corrido una sola vez) tampoco se
+  tocó — es histórico.
+
+Verificado por Javi en producción tras correr la migración: "Persona responsable" ya trae los
+valores rescatados de `ejecutor` donde no se había editado nada, y el campo "Ejecutor" ya no
+aparece en el detalle.
+
+## Hito 9 — Descargar el backlog como CSV
+
+Con Hito 8 cerrado, la prioridad pasó a darle al equipo (Javi, Carlos y el resto de Basis) algo
+concreto con qué trabajar la semana siguiente: un CSV descargable del backlog completo, tal como se
+ve en la vitrina. La ingesta/alimentación semanal de reportes EWA (el diseño de CSV estandarizado
+que se venía conversando) se dejó explícitamente para después — este hito es solo la mitad de
+"salida" (export), no la de "entrada" (import).
+
+### Dos decisiones de alcance, antes de construir
+
+Se resolvieron por `AskUserQuestion` antes de tocar código, porque cambiaban qué tan grande era el
+trabajo:
+
+- **Columnas**: no el detalle completo estilo Excel original (con evidencia y actividad propuesta,
+  texto largo), sino solo lo que ya se ve en la tabla de la vitrina sin dar click — ID, Categoría,
+  Hallazgo, Prioridad, Estado — más dos que Javi pidió agregar: Responsable y Fecha de compromiso.
+- **Alcance**: el CSV respeta los filtros activos en pantalla (categoría/prioridad/estado y el
+  buscador) en vez de exportar siempre el backlog completo — "solo imprimirá lo que el filtro
+  muestre actualmente en la vitrina".
+
+### Todo client-side, sin endpoint nuevo
+
+`GET /api/items` ya carga en memoria (`BACKLOG`) todas las columnas que hacían falta, así que no
+se necesitó tocar el API — el CSV se arma en el navegador:
+
+- Un botón **"Descargar CSV"** junto a los filtros del Backlog completo.
+- `FILTERED_ACTUAL` — variable nueva a nivel de módulo que `render()` actualiza en cada pasada con
+  el mismo arreglo `filtered` que ya calculaba para pintar la tabla — es lo que el botón exporta,
+  para que el CSV sea exactamente lo que está en pantalla, filtros incluidos.
+- Escapado CSV real (comillas dobles alrededor de cualquier campo con coma, comilla o salto de
+  línea — `hallazgo` es texto libre y puede traer cualquiera de los tres) y un BOM de UTF-8 al
+  inicio del archivo, para que Excel en Windows no rompa los acentos y la ñ.
+- Nombre de archivo `ewa-backlog_YYYY-MM-DD.csv`.
+
+Verificado por Javi en producción: descargó el CSV con y sin filtros activos, y confirmó que abre
+correcto en Excel.
+
 ## Después de este hito
 
-Con Hito 7 cerrado, el tracker ya tiene una bitácora real de seguimiento y reglas de negocio sobre
-el ciclo de vida de un item — dos piezas que el uso semanal real del proceso EWA (bajar el reporte
-de `me.sap.com`, revisar avances con Cuprum/Accenture) venía pidiendo. De la lista original de 7
-mejoras, quedan pendientes:
+Con Hito 9 cerrado, el equipo ya tiene una fotografía exportable del backlog para trabajar la
+semana siguiente. De la lista original de 7 mejoras, quedan pendientes:
 
 - **Exportar "Avance de items" a documento** (Word/Excel/PDF), para enviarlo sin depender de que
   alguien abra la vitrina.
@@ -870,9 +970,12 @@ mejoras, quedan pendientes:
   invitar a Carlos Sánchez como colaborador) y restringir la edición de cada item a quien lo tiene
   asignado.
 - **Ingesta semanal de reportes EWA**: hoy la base solo refleja el seed de Hito 3 (una carga
-  única); falta el formato estándar de CSV y la pantalla de carga dentro de la app.
+  única); falta el formato estándar de CSV y la pantalla de carga dentro de la app. Ya hay un
+  análisis hecho comparando dos reportes EWA reales de periodos distintos (mayo y agosto 2026):
+  SAP no asigna un ID estable a cada alerta — solo los números de SAP Note (pares
+  causa/solución) son identificadores confiables entre periodos; el resto se compara por texto
+  normalizado.
 - **Detalle enriquecido de items** desde el archivo/blob del EWA original.
 - **Deduplicación de items repetidos** entre reportes semanales consecutivos.
-- **Exportar el backlog a CSV/Excel** desde la vitrina.
 - Seguir explorando TypeScript con mini-laboratorios (tema aparte, ya conversado, para retomar
   cuando convenga).
