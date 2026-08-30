@@ -3,6 +3,8 @@
 // Incluye "sistema" (join hasta Sistemas) para que la vitrina no tenga que
 // pedir el detalle de cada item solo para saber de qué sistema es.
 //
+// Hito 8: ejecutor salió de esta respuesta — se fusionó en dueno_seguimiento.
+//
 // authLevel "anonymous" es a propósito: la protección real de este endpoint
 // no la da Azure Functions, la da staticwebapp.config.json (Hito 2) — todo
 // /api/* ya exige el rol "colaborador" antes de que la petición llegue aquí.
@@ -39,7 +41,7 @@ export async function itemsList(
 
   const resultado = await dbRequest.query(`
     SELECT i.codigo_item, i.categoria, i.hallazgo, i.prioridad, i.dueno_seguimiento,
-           i.ejecutor, i.aprobador, i.estado, i.fecha_compromiso, s.codigo AS sistema
+           i.aprobador, i.estado, i.fecha_compromiso, s.codigo AS sistema
     FROM Items i
     JOIN EWAs e ON e.id = i.ewa_id
     JOIN Sistemas s ON s.id = e.sistema_id

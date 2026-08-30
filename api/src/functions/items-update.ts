@@ -12,6 +12,10 @@
 // con su propio endpoint (notas-list.ts / notas-add.ts), porque dejó de ser
 // "un campo del item" para ser una bitácora de muchas notas por item.
 //
+// Hito 8: ejecutor salió de la respuesta de este endpoint también — se
+// fusionó en dueno_seguimiento (nunca fue un campo editable aquí, pero se
+// devolvía en el item actualizado; ya no tiene caso).
+//
 // Hito 7 (ajuste): máquina de estados. Reglas, en las palabras de Javi:
 //   - Una vez que un item sale de "Pendiente", nunca puede volver ahí.
 //   - "Cancelado" y "Finalizado" son terminales: el item ya no se puede
@@ -198,7 +202,7 @@ export async function itemsUpdate(
       .input("codigo", sql.VarChar(20), codigo)
       .query(`
         SELECT codigo_item, categoria, hallazgo, evidencia, actividad_propuesta,
-               prioridad, dueno_seguimiento, ejecutor, aprobador, estado,
+               prioridad, dueno_seguimiento, aprobador, estado,
                fecha_compromiso
         FROM Items
         WHERE codigo_item = @codigo
