@@ -324,6 +324,9 @@
     <button type="button" class="nav-item" id="nav-reporteo" data-page="reporteo">
       <span class="dot"></span> Reporteo
     </button>
+    <button type="button" class="nav-item" id="nav-importar" data-page="importar">
+      <span class="dot"></span> Importar EWA
+    </button>
   </nav>
 
   <div class="main-area">
@@ -386,6 +389,52 @@
               </thead>
               <tbody id="table-body"></tbody>
             </table>
+          </section>
+
+        </div>
+
+        <div id="page-importar" class="page" style="display:none;">
+
+          <section>
+            <h2 class="section-title">Backlog actual (formato de import)</h2>
+            <p class="result-count">
+              Descarga el backlog completo tal como está hoy, ya con las mismas columnas que
+              espera el import (categoria, hallazgo, evidencia, actividad_propuesta, prioridad) —
+              compártelo junto con el reporte EWA de la semana para generar el CSV de items nuevos,
+              sin tener que ir a la Vitrina a sacarlo aparte.
+            </p>
+            <div class="edit-actions" style="margin-top: 10px;">
+              <button type="button" class="chart-toggle-btn" id="csv-backlog-actual-btn">Descargar backlog actual</button>
+              <span class="save-status" id="csv-backlog-actual-status"></span>
+            </div>
+          </section>
+
+          <section>
+            <h2 class="section-title">Importar items nuevos</h2>
+            <div class="edit-form">
+              <div class="edit-grid">
+                <div class="edit-field">
+                  <label for="import-sistema">Sistema</label>
+                  <input type="text" id="import-sistema" value="PS4" maxlength="10">
+                </div>
+                <div class="edit-field">
+                  <label for="import-fecha-desde">Reporte desde</label>
+                  <input type="date" id="import-fecha-desde">
+                </div>
+                <div class="edit-field">
+                  <label for="import-fecha-hasta">Reporte hasta</label>
+                  <input type="date" id="import-fecha-hasta">
+                </div>
+                <div class="edit-field">
+                  <label for="import-csv-file">CSV de items nuevos</label>
+                  <input type="file" id="import-csv-file" accept=".csv,text/csv">
+                </div>
+                <div class="edit-actions">
+                  <button class="save-btn" type="button" id="import-btn">Importar</button>
+                  <span class="save-status" id="import-status"></span>
+                </div>
+              </div>
+            </div>
           </section>
 
         </div>
@@ -1370,34 +1419,202 @@
     return fecha ? String(fecha).slice(0, 10) : '';
   }
 
-  function exportarCSV() {
-    const encabezados = ['ID', 'Categoría', 'Hallazgo', 'Prioridad', 'Estado', 'Responsable', 'Fecha de compromiso'];
-    const filas = FILTERED_ACTUAL.map(d => [
-      d.codigo_item, d.categoria, d.hallazgo, d.prioridad, d.estado,
-      d.dueno_seguimiento || '', csvFecha(d.fecha_compromiso),
-    ]);
+  // Helper compartido: arma el CSV (con BOM de UTF-8, para que Excel en
+  // Windows no rompa acentos/ñ) y dispara la descarga. Lo usan tanto
+  // exportarCSV() (Hito 9) como el export del backlog en formato de import
+  // (Hito 10) — misma mecánica, distinto contenido.
+  function descargarCSV(nombreArchivo, encabezados, filas) {
     const csv = [encabezados, ...filas].map(fila => fila.map(csvEscape).join(',')).join('\r\n');
-
-    // BOM de UTF-8 al principio: sin esto, Excel en Windows (el caso real
-    // aquí) abre los acentos/ñ del CSV como caracteres corruptos.
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
-    const hoy = new Date().toISOString().slice(0, 10);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'ewa-backlog_' + hoy + '.csv';
+    a.download = nombreArchivo;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
   }
 
+  function exportarCSV() {
+    const encabezados = ['ID', 'Categoría', 'Hallazgo', 'Prioridad', 'Estado', 'Responsable', 'Fecha de compromiso'];
+    const filas = FILTERED_ACTUAL.map(d => [
+      d.codigo_item, d.categoria, d.hallazgo, d.prioridad, d.estado,
+      d.dueno_seguimiento || '', csvFecha(d.fecha_compromiso),
+    ]);
+    const hoy = new Date().toISOString().slice(0, 10);
+    descargarCSV('ewa-backlog_' + hoy + '.csv', encabezados, filas);
+  }
+
   document.getElementById('csv-export-btn').addEventListener('click', exportarCSV);
 
+  // ---- Backlog actual en formato de import (Hito 10) ----
+  // Vive en la página "Importar EWA" para que Javi no tenga que ir a la
+  // Vitrina a sacar esto aparte: mismas 5 columnas que espera POST
+  // /api/items/import, así sirve directo de referencia de "qué ya está
+  // trackeado" al comparar contra el reporte EWA nuevo. Pide GET
+  // /api/items-export (no BACKLOG, que no trae evidencia/actividad_propuesta
+  // — ver items-export-full.ts, y por qué la ruta lleva guion en vez de ir
+  // anidada bajo items/) solo cuando se le da click al botón, no en
+  // cada carga de la app.
+  async function descargarBacklogActual() {
+    const btn = document.getElementById('csv-backlog-actual-btn');
+    const statusEl = document.getElementById('csv-backlog-actual-status');
+    btn.disabled = true;
+    statusEl.textContent = 'Generando…';
+    statusEl.className = 'save-status';
+    try {
+      const resp = await fetch('/api/items-export');
+      if (!resp.ok) throw new Error('El API respondió ' + resp.status);
+      const items = await resp.json();
+      const encabezados = ['Categoría', 'Hallazgo', 'Evidencia', 'Actividad Propuesta', 'Prioridad'];
+      const filas = items.map(d => [d.categoria, d.hallazgo, d.evidencia || '', d.actividad_propuesta || '', d.prioridad]);
+      const hoy = new Date().toISOString().slice(0, 10);
+      descargarCSV('ewa-backlog-actual_' + hoy + '.csv', encabezados, filas);
+      statusEl.textContent = items.length + ' items descargados.';
+      statusEl.className = 'save-status ok';
+    } catch (err) {
+      statusEl.textContent = 'No se pudo descargar: ' + err.message;
+      statusEl.className = 'save-status error';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById('csv-backlog-actual-btn').addEventListener('click', descargarBacklogActual);
+
+  // ---- Importar items nuevos desde CSV (Hito 10) ----
+  // El CSV lo genera Claude cada semana comparando el reporte EWA nuevo
+  // contra un export fresco del backlog (el botón de arriba) — ver README.
+  // Columnas esperadas (encabezados tolerantes a acentos/mayúsculas):
+  // categoria, hallazgo, evidencia, actividad_propuesta, prioridad. El
+  // codigo_item y el codigo_ewa los asigna el servidor (items-import.ts),
+  // nunca el CSV — así dos imports casi simultáneos no compiten por el
+  // mismo consecutivo.
+
+  // Parser CSV mínimo pero correcto (RFC4180): respeta comillas dobles
+  // alrededor de campos con comas/comillas/saltos de línea, en vez de un
+  // texto.split(',') ingenuo que se rompería con cualquier hallazgo largo
+  // que traiga una coma.
+  function parseCSV(texto) {
+    const filas = [];
+    let fila = [];
+    let campo = '';
+    let dentroComillas = false;
+    for (let i = 0; i < texto.length; i++) {
+      const c = texto[i];
+      if (dentroComillas) {
+        if (c === '"') {
+          if (texto[i + 1] === '"') { campo += '"'; i++; }
+          else { dentroComillas = false; }
+        } else {
+          campo += c;
+        }
+      } else if (c === '"') {
+        dentroComillas = true;
+      } else if (c === ',') {
+        fila.push(campo); campo = '';
+      } else if (c === '\r') {
+        // se ignora; el \n que sigue cierra la fila
+      } else if (c === '\n') {
+        fila.push(campo); campo = '';
+        filas.push(fila); fila = [];
+      } else {
+        campo += c;
+      }
+    }
+    if (campo !== '' || fila.length > 0) { fila.push(campo); filas.push(fila); }
+    return filas.filter(f => !(f.length === 1 && f[0].trim() === ''));
+  }
+
+  // Normaliza un encabezado ("Actividad Propuesta", "actividad_propuesta",
+  // "ActividadPropuesta"...) a una clave comparable, quitando acentos,
+  // mayúsculas y cualquier caracter que no sea letra/número — así el CSV
+  // no depende de que el encabezado venga exactamente como se espera.
+  function normalizarEncabezado(h) {
+    return h.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+
+  const CAMPO_POR_ENCABEZADO = {
+    categoria: 'categoria',
+    hallazgo: 'hallazgo',
+    evidencia: 'evidencia',
+    actividadpropuesta: 'actividad_propuesta',
+    prioridad: 'prioridad',
+  };
+
+  function csvARegistros(texto) {
+    const filas = parseCSV(texto);
+    if (filas.length === 0) return [];
+    const encabezados = filas[0].map(normalizarEncabezado);
+    return filas.slice(1).map(fila => {
+      const registro = {};
+      encabezados.forEach((h, idx) => {
+        const campo = CAMPO_POR_ENCABEZADO[h];
+        if (campo) registro[campo] = (fila[idx] || '').trim();
+      });
+      return registro;
+    }).filter(r => r.categoria || r.hallazgo); // descarta filas totalmente vacías
+  }
+
+  async function importarCSV() {
+    const btn = document.getElementById('import-btn');
+    const statusEl = document.getElementById('import-status');
+    const fileInput = document.getElementById('import-csv-file');
+    const sistema = document.getElementById('import-sistema').value.trim();
+    const fechaDesde = document.getElementById('import-fecha-desde').value;
+    const fechaHasta = document.getElementById('import-fecha-hasta').value;
+
+    if (!fileInput.files[0]) {
+      statusEl.textContent = 'Selecciona un archivo CSV primero.';
+      statusEl.className = 'save-status error';
+      return;
+    }
+    if (!sistema || !fechaDesde || !fechaHasta) {
+      statusEl.textContent = 'Falta sistema, fecha desde o fecha hasta.';
+      statusEl.className = 'save-status error';
+      return;
+    }
+
+    btn.disabled = true;
+    statusEl.textContent = 'Importando…';
+    statusEl.className = 'save-status';
+
+    try {
+      const texto = await fileInput.files[0].text();
+      const registros = csvARegistros(texto);
+      if (registros.length === 0) {
+        throw new Error('El CSV no trajo ninguna fila reconocible (revisa los encabezados).');
+      }
+
+      const resp = await fetch('/api/items/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sistema, fecha_desde: fechaDesde, fecha_hasta: fechaHasta, items: registros }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || ('El API respondió ' + resp.status));
+
+      statusEl.textContent = data.items_creados + ' item(s) nuevo(s) agregado(s) en ' + data.codigo_ewa + ': ' + data.items.map(i => i.codigo_item).join(', ');
+      statusEl.className = 'save-status ok';
+      fileInput.value = '';
+      await cargarBacklog(); // refresca panorama, filtros y tabla con los items nuevos
+    } catch (err) {
+      statusEl.textContent = 'No se pudo importar: ' + err.message;
+      statusEl.className = 'save-status error';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById('import-btn').addEventListener('click', importarCSV);
+
   // ---- Navegación (panel izquierdo) ----
-  // Dos "páginas" cliente-side dentro de #app-content — nunca se recarga la
-  // página ni se vuelve a pedir datos al cambiar, solo se muestra/oculta.
-  const PAGINAS = ['vitrina', 'reporteo'];
+  // Tres "páginas" cliente-side dentro de #app-content — nunca se recarga
+  // la página ni se vuelve a pedir datos al cambiar, solo se muestra/oculta.
+  // "importar" se agregó en el Hito 10 (antes vivía como una sección más
+  // dentro de "vitrina").
+  const PAGINAS = ['vitrina', 'reporteo', 'importar'];
   function mostrarPagina(pagina) {
     PAGINAS.forEach(p => {
       document.getElementById('page-' + p).style.display = p === pagina ? '' : 'none';
