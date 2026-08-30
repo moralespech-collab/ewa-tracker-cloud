@@ -14,13 +14,19 @@
 //      el navegador, ver web/index.html) junto con el sistema y el periodo
 //      del reporte, y hace el alta real.
 //
-// Dos cosas se asignan aquí, nunca las manda quien llama al endpoint, para
-// no arriesgar una colisión si dos personas importan casi al mismo tiempo:
-//   - El código de EWA (EWA-02, EWA-03, ...), o se reutiliza el EWA si ya
-//     existe uno con el mismo sistema y el mismo periodo (para que correr
-//     el import dos veces por accidente no duplique nada).
-//   - El código de cada item (BAS-03, SEC-01, ...), consecutivo dentro de
-//     su categoría.
+// Un periodo (mismo sistema + mismo fecha_desde/fecha_hasta) solo se puede
+// importar UNA vez: si ya existe un EWA con exactamente ese periodo, el
+// endpoint rechaza la petición completa (409) sin tocar nada — nunca
+// reutiliza el EWA existente para agregarle más items encima. Es a
+// propósito simple: subir el mismo archivo dos veces por accidente no
+// duplica nada, solo se rechaza con un mensaje claro. Si de verdad hace
+// falta agregar items a un periodo ya importado, es un caso raro que se
+// resuelve a mano por SQL, no un flujo que valga la pena automatizar.
+//
+// El código de cada item (BAS-03, SEC-01, ...) lo asigna el servidor,
+// consecutivo dentro de su categoría — nunca lo manda quien llama al
+// endpoint, para no arriesgar una colisión si dos personas importan casi
+// al mismo tiempo.
 //
 // Los items nuevos entran con estado = 'Pendiente' (el DEFAULT del
 // schema) — nunca se decide aquí un estado distinto, ni un responsable, ni
@@ -145,48 +151,53 @@ export async function itemsImport(
     }
     const sistemaId = sistemaResultado.recordset[0].id as number;
 
-    // Reutiliza el EWA si ya existe uno con el mismo sistema y el mismo
-    // periodo exacto (mismo fecha_desde y fecha_hasta) — así correr este
-    // import dos veces por accidente con el mismo reporte no crea un
-    // EWA-03 y un EWA-04 para la misma semana.
-    let ewaId: number;
-    let codigoEwa: string;
+    // Si ya existe un EWA con este mismo sistema y este mismo periodo
+    // exacto, se rechaza la petición completa — no se reutiliza, no se le
+    // agregan items encima. Simple a propósito: ese periodo ya se subió,
+    // punto; si de verdad hace falta agregar algo más a un periodo ya
+    // importado, se hace a mano por SQL, no reimportando.
     const ewaExistente = await transaction
       .request()
       .input("sistema_id", sql.Int, sistemaId)
       .input("fecha_desde", sql.Date, new Date(fechaDesde))
       .input("fecha_hasta", sql.Date, new Date(fechaHasta))
       .query(`
-        SELECT id, codigo_ewa FROM EWAs
+        SELECT codigo_ewa FROM EWAs
         WHERE sistema_id = @sistema_id AND fecha_desde = @fecha_desde AND fecha_hasta = @fecha_hasta
       `);
 
     if (ewaExistente.recordset.length > 0) {
-      ewaId = ewaExistente.recordset[0].id as number;
-      codigoEwa = ewaExistente.recordset[0].codigo_ewa as string;
-    } else {
-      const siguienteEwa = await transaction.request().query(`
-        SELECT ISNULL(MAX(CAST(SUBSTRING(codigo_ewa, 5, 10) AS INT)), 0) + 1 AS siguiente
-        FROM EWAs WHERE codigo_ewa LIKE 'EWA-%'
-      `);
-      const numeroEwa = siguienteEwa.recordset[0].siguiente as number;
-      codigoEwa = "EWA-" + String(numeroEwa).padStart(2, "0");
-
-      const nuevoEwa = await transaction
-        .request()
-        .input("sistema_id", sql.Int, sistemaId)
-        .input("codigo_ewa", sql.VarChar(20), codigoEwa)
-        .input("fecha_desde", sql.Date, new Date(fechaDesde))
-        .input("fecha_hasta", sql.Date, new Date(fechaHasta))
-        .input("fecha_carga", sql.Date, new Date())
-        .input("cargado_por", sql.VarChar(100), usuario)
-        .query(`
-          INSERT INTO EWAs (sistema_id, codigo_ewa, fecha_desde, fecha_hasta, fecha_carga, cargado_por)
-          OUTPUT INSERTED.id
-          VALUES (@sistema_id, @codigo_ewa, @fecha_desde, @fecha_hasta, @fecha_carga, @cargado_por)
-        `);
-      ewaId = nuevoEwa.recordset[0].id as number;
+      await transaction.rollback();
+      const codigoExistente = ewaExistente.recordset[0].codigo_ewa as string;
+      return {
+        status: 409,
+        jsonBody: {
+          error: `Ese periodo (${fechaDesde} a ${fechaHasta}) ya se importó como ${codigoExistente}. No se sobrescribe — no se creó ni modificó nada.`,
+        },
+      };
     }
+
+    const siguienteEwa = await transaction.request().query(`
+      SELECT ISNULL(MAX(CAST(SUBSTRING(codigo_ewa, 5, 10) AS INT)), 0) + 1 AS siguiente
+      FROM EWAs WHERE codigo_ewa LIKE 'EWA-%'
+    `);
+    const numeroEwa = siguienteEwa.recordset[0].siguiente as number;
+    const codigoEwa = "EWA-" + String(numeroEwa).padStart(2, "0");
+
+    const nuevoEwa = await transaction
+      .request()
+      .input("sistema_id", sql.Int, sistemaId)
+      .input("codigo_ewa", sql.VarChar(20), codigoEwa)
+      .input("fecha_desde", sql.Date, new Date(fechaDesde))
+      .input("fecha_hasta", sql.Date, new Date(fechaHasta))
+      .input("fecha_carga", sql.Date, new Date())
+      .input("cargado_por", sql.VarChar(100), usuario)
+      .query(`
+        INSERT INTO EWAs (sistema_id, codigo_ewa, fecha_desde, fecha_hasta, fecha_carga, cargado_por)
+        OUTPUT INSERTED.id
+        VALUES (@sistema_id, @codigo_ewa, @fecha_desde, @fecha_hasta, @fecha_carga, @cargado_por)
+      `);
+    const ewaId = nuevoEwa.recordset[0].id as number;
 
     // Consecutivo por prefijo de categoría: se consulta el máximo actual
     // una sola vez por prefijo (no una vez por fila) y se incrementa en
