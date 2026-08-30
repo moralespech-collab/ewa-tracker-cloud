@@ -371,6 +371,7 @@
               <select id="filter-categoria"><option value="">Categor&iacute;a: todas</option></select>
               <select id="filter-prioridad"><option value="">Prioridad: todas</option></select>
               <select id="filter-estado"><option value="">Estado: todos</option></select>
+              <button type="button" class="chart-toggle-btn" id="csv-export-btn">Descargar CSV</button>
             </div>
             <div class="result-count" id="result-count"></div>
             <table class="backlog">
@@ -894,6 +895,12 @@
   // cada item la primera vez que se abre su fila — GET /api/items no trae
   // esos campos a propósito, para no cargar 48 textos largos de una vez.
   let BACKLOG = [];
+  // FILTERED_ACTUAL: el resultado del último render() del backlog — mismos
+  // items que ves en pantalla, después de categoria/prioridad/estado y el
+  // buscador. El botón "Descargar CSV" exporta esto, no BACKLOG completo,
+  // a propósito: lo que se descarga tiene que ser exactamente lo que el
+  // filtro está mostrando en ese momento (Hito 9).
+  let FILTERED_ACTUAL = [];
   const DETAIL_CACHE = {};
   const OPEN_ROWS = new Set();
   // NOTAS_CACHE: codigo -> arreglo de notas (tabla NotasSeguimiento, Hito 7),
@@ -1024,6 +1031,7 @@
     });
 
     resultCount.textContent = filtered.length + ' de ' + BACKLOG.length + ' actividades';
+    FILTERED_ACTUAL = filtered;
 
     tbody.innerHTML = '';
     filtered.forEach((d) => {
@@ -1338,6 +1346,53 @@
   document.getElementById('filter-categoria').addEventListener('change', render);
   document.getElementById('filter-prioridad').addEventListener('change', render);
   document.getElementById('filter-estado').addEventListener('change', render);
+
+  // ---- Descargar CSV (Hito 9) ----
+  // Todo client-side: BACKLOG ya trae en memoria (GET /api/items) las
+  // columnas que hacen falta — no se necesita un endpoint nuevo. Exporta
+  // FILTERED_ACTUAL (lo que el filtro/buscador está mostrando ahora mismo
+  // en la tabla), no el backlog completo — a propósito, por instrucción de
+  // Javi: "solo imprimirá lo que el filtro muestre actualmente en la vitrina".
+  function csvEscape(valor) {
+    const s = valor === null || valor === undefined ? '' : String(valor);
+    // Comillas dobles alrededor de cualquier campo que traiga coma, comilla
+    // o salto de línea (hallazgo es texto libre y puede traer cualquiera de
+    // los tres) — y las comillas internas se duplican, regla estándar CSV.
+    if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+
+  function csvFecha(fecha) {
+    // Mismo truco que formatFechaCorta: cortar el ISO a mano en vez de
+    // parsearlo con new Date(), para no correr un día por zona horaria.
+    // A diferencia de formatFechaCorta, aquí se deja en YYYY-MM-DD (no
+    // "09 oct 2026") porque es lo que Excel ordena y filtra sin ambigüedad.
+    return fecha ? String(fecha).slice(0, 10) : '';
+  }
+
+  function exportarCSV() {
+    const encabezados = ['ID', 'Categoría', 'Hallazgo', 'Prioridad', 'Estado', 'Responsable', 'Fecha de compromiso'];
+    const filas = FILTERED_ACTUAL.map(d => [
+      d.codigo_item, d.categoria, d.hallazgo, d.prioridad, d.estado,
+      d.dueno_seguimiento || '', csvFecha(d.fecha_compromiso),
+    ]);
+    const csv = [encabezados, ...filas].map(fila => fila.map(csvEscape).join(',')).join('\r\n');
+
+    // BOM de UTF-8 al principio: sin esto, Excel en Windows (el caso real
+    // aquí) abre los acentos/ñ del CSV como caracteres corruptos.
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const hoy = new Date().toISOString().slice(0, 10);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'ewa-backlog_' + hoy + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  document.getElementById('csv-export-btn').addEventListener('click', exportarCSV);
 
   // ---- Navegación (panel izquierdo) ----
   // Dos "páginas" cliente-side dentro de #app-content — nunca se recarga la
