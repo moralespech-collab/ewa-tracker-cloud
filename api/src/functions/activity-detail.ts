@@ -3,6 +3,12 @@
 // items tuvieron actividad y qué cambió exactamente en cada uno (campo,
 // valor anterior, valor nuevo, quién lo hizo y cuándo).
 //
+// Hito 7: se agrega la columna comentario. Los cambios de campo (estado,
+// dueño, fecha) la traen NULL y siguen usando valor_anterior/valor_nuevo;
+// las notas de seguimiento nuevas (campo_cambiado = 'nota_seguimiento', ver
+// notas-add.ts) no tienen "antes/después" — es texto agregado, no un campo
+// que cambió — así que viajan en comentario en su lugar.
+//
 // A diferencia de activity-summary.ts (que agrega por mes/categoría para la
 // gráfica), este endpoint no agrega nada — regresa cada fila de ActivityLog
 // tal cual, unida a Items para tener categoría y hallazgo. La vitrina agrupa
@@ -23,7 +29,7 @@ export async function activityDetail(
   const resultado = await pool.request().query(`
     SELECT FORMAT(al.[timestamp], 'yyyy-MM') AS mes, i.codigo_item, i.categoria, i.hallazgo,
            al.[timestamp] AS fecha_hora, al.usuario, al.campo_cambiado,
-           al.valor_anterior, al.valor_nuevo
+           al.valor_anterior, al.valor_nuevo, al.comentario
     FROM ActivityLog al
     JOIN Items i ON i.id = al.item_id
     ORDER BY mes DESC, i.codigo_item, al.[timestamp]

@@ -46,6 +46,36 @@
   }
   .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 20px 80px; }
 
+  .app-shell { display: flex; align-items: flex-start; min-height: 100vh; }
+  .sidebar {
+    flex: none; width: 200px; box-sizing: border-box;
+    padding: 28px 14px; position: sticky; top: 0; height: 100vh; overflow-y: auto;
+    border-right: 1px solid var(--border);
+  }
+  .sidebar-title {
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-muted); font-weight: 700; padding: 0 10px 14px;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    font: inherit; font-size: 0.92rem; font-weight: 600; text-align: left; cursor: pointer;
+    background: none; color: var(--text-secondary); border: none; border-radius: 8px;
+    padding: 9px 10px; margin-bottom: 2px;
+  }
+  .nav-item:hover { background: var(--card-bg); color: var(--text-primary); }
+  .nav-item.active { background: var(--accent); color: #fff; }
+  .nav-item .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.5; flex: none; }
+  .main-area { flex: 1 1 auto; min-width: 0; }
+  @media (max-width: 720px) {
+    .app-shell { flex-direction: column; }
+    .sidebar {
+      width: auto; height: auto; position: static; border-right: none; border-bottom: 1px solid var(--border);
+      padding: 14px 20px; display: flex; align-items: center; gap: 4px; overflow-x: auto;
+    }
+    .sidebar-title { display: none; }
+    .nav-item { width: auto; white-space: nowrap; margin-bottom: 0; }
+  }
+
   header.hero {
     display: flex; flex-wrap: wrap; gap: 16px 32px;
     justify-content: space-between; align-items: flex-end;
@@ -137,24 +167,26 @@
   table.activity-table td { padding: 7px 10px; border-bottom: 1px solid var(--gridline); }
   table.activity-table td.num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 
-  .report-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .report-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
   .report-toolbar label { font-size: 0.82rem; color: var(--text-secondary); }
-  .report-toolbar select {
+  .report-toolbar select, .report-toolbar input[type="search"] {
     font: inherit; font-size: 0.86rem;
     background: var(--surface-1); color: var(--text-primary);
     border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
   }
+  .report-toolbar input[type="search"] { flex: 1 1 180px; min-width: 140px; }
   .report-item { padding: 16px 0; border-top: 1px solid var(--gridline); }
   .report-item:first-child { border-top: none; padding-top: 6px; }
   .report-item-header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
   .report-item-header .id-cell { font-weight: 700; }
   .report-item-header .hallazgo { color: var(--text-secondary); font-size: 0.88rem; }
-  .report-changes { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
-  .report-change-row { font-size: 0.85rem; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
-  .report-change-row .campo { font-weight: 600; color: var(--text-primary); min-width: 150px; }
-  .report-change-row .valores { color: var(--text-secondary); }
-  .report-change-row .valores .old { text-decoration: line-through; color: var(--text-muted); }
-  .report-change-row .meta { color: var(--text-muted); font-size: 0.78rem; margin-left: auto; white-space: nowrap; }
+  .report-meta { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.82rem; color: var(--text-secondary); margin: 6px 0 10px; }
+  .report-meta strong { color: var(--text-primary); font-weight: 600; }
+  .report-notas { display: flex; flex-direction: column; gap: 6px; }
+  .report-nota-row { display: flex; gap: 10px; font-size: 0.85rem; }
+  .report-nota-row .fecha { color: var(--text-muted); flex: none; white-space: nowrap; }
+  .report-nota-row .texto { color: var(--text-primary); }
+  .report-sin-notas { font-size: 0.82rem; color: var(--text-muted); font-style: italic; }
 
   .controls {
     display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px;
@@ -225,6 +257,41 @@
     border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px;
   }
   .edit-field textarea { resize: vertical; min-height: 56px; }
+  .nota-list { display: flex; flex-direction: column; gap: 8px; margin: 0 0 8px; }
+  .nota-item {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px;
+  }
+  .nota-item-meta { font-size: 0.74rem; color: var(--text-muted); margin-bottom: 3px; }
+  .nota-item-texto { font-size: 0.85rem; color: var(--text-primary); white-space: pre-wrap; }
+  .nota-empty, .nota-loading { font-size: 0.82rem; color: var(--text-muted); margin: 0 0 8px; }
+  .nota-empty.nota-error { color: #c0392b; }
+  .nota-toggle {
+    display: inline-flex; align-items: center; gap: 8px;
+    font: inherit; font-size: 0.86rem; font-weight: 600; cursor: pointer;
+    background: none; border: none; padding: 4px 0; color: var(--accent);
+  }
+  .nota-toggle:disabled { opacity: 0.5; cursor: default; }
+  .edit-field select:disabled, .edit-field input:disabled { opacity: 0.6; cursor: default; }
+  .locked-banner {
+    background: rgba(192,57,43,0.12); color: #c0392b; border: 1px solid rgba(192,57,43,0.35);
+    border-radius: 8px; padding: 8px 12px; font-size: 0.82rem; margin-bottom: 10px;
+  }
+  .nota-toggle .nota-plus {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; border-radius: 50%; flex: none;
+    background: var(--accent); color: #fff; font-size: 0.9rem; line-height: 1;
+  }
+  .nota-add { margin-top: 8px; }
+  .nota-add-actions { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .nota-save-btn {
+    font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer;
+    background: var(--accent); color: #fff; border: none; border-radius: 8px;
+    padding: 6px 14px;
+  }
+  .nota-save-btn:disabled { opacity: 0.6; cursor: default; }
+  .nota-save-status { font-size: 0.78rem; color: var(--text-muted); }
+  .nota-save-status.error { color: #c0392b; }
   .edit-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; margin-top: 4px; }
   .save-btn {
     font: inherit; font-size: 0.86rem; font-weight: 600; cursor: pointer;
@@ -247,95 +314,120 @@
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="app-shell">
 
-  <header class="hero">
-    <div>
-      <h1>EWA Tracker &middot; PS4 &middot; Cuprum</h1>
-      <p class="sub">Backlog de optimizaci&oacute;n generado a partir del EarlyWatch Alert del 24-ago-2026 &mdash; SAP S/4HANA 2022, HANA DB</p>
-    </div>
-    <div class="badge-row">
-      <span class="pill">Datos en vivo &middot; Hito 4</span>
-      <span class="pill" id="last-updated-pill">EWA: 24-ago-2026</span>
-    </div>
-  </header>
+  <nav class="sidebar">
+    <div class="sidebar-title">EWA Tracker</div>
+    <button type="button" class="nav-item active" id="nav-vitrina" data-page="vitrina">
+      <span class="dot"></span> Vitrina
+    </button>
+    <button type="button" class="nav-item" id="nav-reporteo" data-page="reporteo">
+      <span class="dot"></span> Reporteo
+    </button>
+  </nav>
 
-  <div id="load-state" class="load-state">Cargando backlog&hellip; (si la base de datos estuvo inactiva, el primer request puede tardar hasta un minuto)</div>
+  <div class="main-area">
+    <div class="wrap">
 
-  <div id="app-content" style="display:none;">
-
-    <section>
-      <h2 class="section-title">Panorama</h2>
-      <div class="stat-row" id="stat-row"></div>
-    </section>
-
-    <section>
-      <div class="two-col">
+      <header class="hero">
         <div>
-          <h2 class="section-title">Por categor&iacute;a</h2>
-          <div class="bars" id="category-bars"></div>
+          <h1>EWA Tracker &middot; PS4 &middot; Cuprum</h1>
+          <p class="sub">Backlog de optimizaci&oacute;n generado a partir del EarlyWatch Alert del 24-ago-2026 &mdash; SAP S/4HANA 2022, HANA DB</p>
         </div>
-        <div>
-          <h2 class="section-title">Por prioridad</h2>
-          <div class="prio-tiles" id="prio-tiles"></div>
+        <div class="badge-row">
+          <span class="pill">Datos en vivo &middot; Hito 6</span>
+          <span class="pill" id="last-updated-pill">EWA: 24-ago-2026</span>
         </div>
-      </div>
-    </section>
+      </header>
 
-    <section>
-      <h2 class="section-title">Actividad por mes</h2>
-      <div class="chart-card">
-        <div class="chart-toolbar">
-          <button type="button" class="chart-toggle-btn" id="activity-toggle-btn">Ver como tabla</button>
-        </div>
-        <div id="activity-body">
-          <div class="chart-empty">Cargando actividad&hellip;</div>
-        </div>
-      </div>
-    </section>
+      <div id="load-state" class="load-state">Cargando backlog&hellip; (si la base de datos estuvo inactiva, el primer request puede tardar hasta un minuto)</div>
 
-    <section>
-      <h2 class="section-title">Informe mensual</h2>
-      <div class="chart-card">
-        <div class="report-toolbar">
-          <label for="report-mes">Mes:</label>
-          <select id="report-mes"></select>
-        </div>
-        <div id="report-body">
-          <div class="chart-empty">Cargando informe&hellip;</div>
-        </div>
-      </div>
-    </section>
+      <div id="app-content" style="display:none;">
 
-    <section>
-      <h2 class="section-title">Backlog completo</h2>
-      <div class="controls">
-        <input type="search" id="search-box" placeholder="Buscar por hallazgo, ID o due&ntilde;o...">
-        <select id="filter-categoria"><option value="">Categor&iacute;a: todas</option></select>
-        <select id="filter-prioridad"><option value="">Prioridad: todas</option></select>
-        <select id="filter-estado"><option value="">Estado: todos</option></select>
-      </div>
-      <div class="result-count" id="result-count"></div>
-      <table class="backlog">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Categor&iacute;a</th>
-            <th>Hallazgo</th>
-            <th>Prioridad</th>
-            <th>Estado</th>
-          </tr>
-        </thead>
-        <tbody id="table-body"></tbody>
-      </table>
-    </section>
+        <div id="page-vitrina" class="page">
 
+          <section>
+            <h2 class="section-title">Panorama</h2>
+            <div class="stat-row" id="stat-row"></div>
+          </section>
+
+          <section>
+            <div class="two-col">
+              <div>
+                <h2 class="section-title">Por categor&iacute;a</h2>
+                <div class="bars" id="category-bars"></div>
+              </div>
+              <div>
+                <h2 class="section-title">Por prioridad</h2>
+                <div class="prio-tiles" id="prio-tiles"></div>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 class="section-title">Backlog completo</h2>
+            <div class="controls">
+              <input type="search" id="search-box" placeholder="Buscar por hallazgo, ID o due&ntilde;o...">
+              <select id="filter-categoria"><option value="">Categor&iacute;a: todas</option></select>
+              <select id="filter-prioridad"><option value="">Prioridad: todas</option></select>
+              <select id="filter-estado"><option value="">Estado: todos</option></select>
+            </div>
+            <div class="result-count" id="result-count"></div>
+            <table class="backlog">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Categor&iacute;a</th>
+                  <th>Hallazgo</th>
+                  <th>Prioridad</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody id="table-body"></tbody>
+            </table>
+          </section>
+
+        </div>
+
+        <div id="page-reporteo" class="page" style="display:none;">
+
+          <section>
+            <h2 class="section-title">Actividad por mes</h2>
+            <div class="chart-card">
+              <div class="chart-toolbar">
+                <button type="button" class="chart-toggle-btn" id="activity-toggle-btn">Ver como tabla</button>
+              </div>
+              <div id="activity-body">
+                <div class="chart-empty">Cargando actividad&hellip;</div>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 class="section-title">Avance de items</h2>
+            <div class="chart-card">
+              <div class="report-toolbar">
+                <label for="report-categoria">Categor&iacute;a:</label>
+                <select id="report-categoria"><option value="">Todas</option></select>
+                <input type="search" id="report-item" placeholder="Filtrar por ID de item (ej. ABAP-01)&hellip;">
+              </div>
+              <div id="report-body">
+                <div class="chart-empty">Cargando avance&hellip;</div>
+              </div>
+            </div>
+          </section>
+
+        </div>
+
+      </div>
+
+      <footer>
+        <span>Construido con Terraform + Azure Static Web Apps &middot; datos desde Azure SQL, cargados originalmente del tracker Excel de Cuprum</span>
+        <span id="build-note">Hito 6: panel de navegaci&oacute;n (Vitrina / Reporteo)</span>
+      </footer>
+
+    </div>
   </div>
-
-  <footer>
-    <span>Construido con Terraform + Azure Static Web Apps &middot; datos desde Azure SQL, cargados originalmente del tracker Excel de Cuprum</span>
-    <span id="build-note">API real (Hito 4): lectura y actualizaci&oacute;n con historial de cambios</span>
-  </footer>
 
 </div>
 
@@ -633,26 +725,19 @@
     renderActividad();
   });
 
-  // ---- Informe mensual (GET /api/activity-detail) ----
-  // A diferencia de la gráfica (que agrega por categoría), aquí cada fila de
-  // ActivityLog se muestra individual, agrupada por item — el detalle que
-  // pediste para el reporte mensual de avance. ACTIVITY_DETAIL llega sin
-  // agregar; el mes se filtra del lado del cliente con el <select>.
-  let ACTIVITY_DETAIL = [];
-
-  const CAMPO_LABEL = {
-    estado: "Estado",
-    dueno_seguimiento: "Persona responsable",
-    notas_seguimiento: "Notas de seguimiento",
-    fecha_compromiso: "Fecha de compromiso"
-  };
-  function truncar(s, n) {
-    return s.length > n ? s.slice(0, n) + '…' : s;
-  }
-  function formatValor(v) {
-    if (v === null || v === undefined || v === '') return '(vacío)';
-    return truncar(String(v), 140);
-  }
+  // ---- Avance de items (GET /api/notas, sobre BACKLOG ya cargado) ----
+  // Esto YA NO es un log de auditoría por mes (eso lo sigue siendo la
+  // gráfica de arriba, "Actividad por mes", que no cambió) — es una foto
+  // del estado actual de cada item que ya salió de "Pendiente": su
+  // encabezado (estado, responsable, fecha de compromiso) y la bitácora de
+  // notas que se le han ido agregando, sin mezclar las dos cosas. Depende
+  // de BACKLOG (por eso cargarAvance() se dispara desde cargarBacklog(), no
+  // de forma independiente al cargar la página como hacía cargarInforme()
+  // con ACTIVITY_DETAIL).
+  //
+  // El endpoint /api/activity-detail y su log campo-por-campo con
+  // antes/después siguen existiendo (no se borró nada del backend) — solo
+  // dejó de alimentar esta pantalla, que ahora cuenta una historia distinta.
   function formatFechaHora(iso) {
     try {
       return new Date(iso).toLocaleString('es-MX', {
@@ -662,118 +747,147 @@
       return iso;
     }
   }
+  function formatFechaCorta(fecha) {
+    // fecha_compromiso llega como columna DATE (ej. "2026-10-09T00:00:00.000Z")
+    // — construir el Date a mano con año/mes/día evita que un new Date(iso)
+    // se corra un día por zona horaria, el mismo tipo de bug silencioso que
+    // ya nos mordió con light-dark() en Hito 4.
+    try {
+      const [y, m, d] = String(fecha).slice(0, 10).split('-').map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
+    } catch {
+      return String(fecha);
+    }
+  }
 
-  async function cargarInforme() {
+  let NOTAS_POR_ITEM = {};
+
+  async function cargarAvance() {
     const body = document.getElementById('report-body');
     try {
-      const resp = await fetch('/api/activity-detail');
+      const resp = await fetch('/api/notas');
       if (!resp.ok) {
         throw new Error('El API respondió ' + resp.status);
       }
-      ACTIVITY_DETAIL = await resp.json();
-      renderInformeSelectorMes();
-      renderInforme();
+      const todasLasNotas = await resp.json();
+      NOTAS_POR_ITEM = {};
+      todasLasNotas.forEach(n => {
+        if (!NOTAS_POR_ITEM[n.codigo_item]) NOTAS_POR_ITEM[n.codigo_item] = [];
+        NOTAS_POR_ITEM[n.codigo_item].push(n);
+      });
+      renderAvanceFiltros();
+      renderAvance();
     } catch (err) {
       body.innerHTML = '';
       const div = document.createElement('div');
       div.className = 'chart-empty';
-      div.textContent = 'No se pudo cargar el informe (' + err.message + ').';
+      div.textContent = 'No se pudo cargar el avance (' + err.message + ').';
       body.appendChild(div);
     }
   }
 
-  function renderInformeSelectorMes() {
-    const select = document.getElementById('report-mes');
-    const meses = [...new Set(ACTIVITY_DETAIL.map(d => d.mes))].sort().reverse();
-    const actual = select.value;
-    select.innerHTML = '';
-    if (meses.length === 0) {
-      select.style.display = 'none';
-      return;
-    }
-    select.style.display = '';
-    meses.forEach(mes => {
+  function renderAvanceFiltros() {
+    // Mismo criterio que en los demás filtros del proyecto: solo las
+    // categorías que de verdad tienen algún item fuera de "Pendiente", en
+    // el orden fijo (CATEGORY_ORDER), preservando la selección actual.
+    const selectCat = document.getElementById('report-categoria');
+    const catActual = selectCat.value;
+    const activos = BACKLOG.filter(d => d.estado !== 'Pendiente');
+    const categoriasPresentes = CATEGORY_ORDER.filter(c => activos.some(d => d.categoria === c));
+    selectCat.innerHTML = '<option value="">Todas</option>';
+    categoriasPresentes.forEach(c => {
       const opt = document.createElement('option');
-      opt.value = mes;
-      opt.textContent = formatMes(mes);
-      select.appendChild(opt);
+      opt.value = c;
+      opt.textContent = c;
+      selectCat.appendChild(opt);
     });
-    select.value = meses.includes(actual) ? actual : meses[0];
+    selectCat.value = categoriasPresentes.includes(catActual) ? catActual : '';
   }
 
-  function renderInforme() {
+  function renderAvance() {
     const body = document.getElementById('report-body');
-    const select = document.getElementById('report-mes');
     body.innerHTML = '';
 
-    if (ACTIVITY_DETAIL.length === 0) {
+    const activos = BACKLOG.filter(d => d.estado !== 'Pendiente');
+
+    if (activos.length === 0) {
       const div = document.createElement('div');
       div.className = 'chart-empty';
-      div.textContent = 'Todavía no hay actividad registrada — en cuanto se edite un item, aquí aparecerá el informe mensual.';
+      div.textContent = 'Todavía no hay items fuera de "Pendiente" — en cuanto uno cambie de estado, aparecerá aquí.';
       body.appendChild(div);
       return;
     }
 
-    const mesSeleccionado = select.value;
-    const filas = ACTIVITY_DETAIL.filter(d => d.mes === mesSeleccionado);
+    const categoriaSeleccionada = document.getElementById('report-categoria').value;
+    const itemBuscado = document.getElementById('report-item').value.trim().toLowerCase();
 
-    if (filas.length === 0) {
+    const filtrados = activos.filter(d =>
+      (categoriaSeleccionada === '' || d.categoria === categoriaSeleccionada) &&
+      (itemBuscado === '' || d.codigo_item.toLowerCase().includes(itemBuscado))
+    );
+
+    if (filtrados.length === 0) {
       const div = document.createElement('div');
       div.className = 'chart-empty';
-      div.textContent = 'Sin actividad en ' + formatMes(mesSeleccionado) + '.';
+      div.textContent = 'Ningún item en seguimiento coincide con esos filtros.';
       body.appendChild(div);
       return;
     }
 
-    // Agrupa por item, preservando el orden en que llegan (el API ya las
-    // ordena por codigo_item y fecha_hora) — solo aparecen los items que
-    // tuvieron actividad ese mes, como pediste.
-    const porItem = [];
-    const indice = {};
-    filas.forEach(f => {
-      if (!(f.codigo_item in indice)) {
-        indice[f.codigo_item] = porItem.length;
-        porItem.push({ codigo_item: f.codigo_item, categoria: f.categoria, hallazgo: f.hallazgo, cambios: [] });
-      }
-      porItem[indice[f.codigo_item]].cambios.push(f);
-    });
+    filtrados.forEach(item => {
+      const codigo = item.codigo_item;
+      const notas = NOTAS_POR_ITEM[codigo] || [];
 
-    porItem.forEach(item => {
       const div = document.createElement('div');
       div.className = 'report-item';
 
+      // Cabecera: identidad del item + su estado actual — nada de
+      // antes/después aquí, es una foto del presente, no un historial.
       const header = document.createElement('div');
       header.className = 'report-item-header';
       header.innerHTML =
         '<span class="cat-dot" style="background: ' + catColorResolved(item.categoria) + ';"></span>' +
         '<span class="id-cell"></span>' +
-        '<span class="hallazgo"></span>';
-      header.querySelector('.id-cell').textContent = item.codigo_item;
+        '<span class="hallazgo"></span>' +
+        '<span class="status-badge"><span class="dot"></span><span class="estado-text"></span></span>';
+      header.querySelector('.id-cell').textContent = codigo;
       header.querySelector('.hallazgo').textContent = item.hallazgo;
+      header.querySelector('.dot').style.background = estadoColor(item.estado);
+      header.querySelector('.estado-text').textContent = item.estado;
       div.appendChild(header);
 
-      const lista = document.createElement('div');
-      lista.className = 'report-changes';
-      item.cambios.forEach(c => {
-        const row = document.createElement('div');
-        row.className = 'report-change-row';
-        row.innerHTML =
-          '<span class="campo"></span>' +
-          '<span class="valores"><span class="old"></span> &rarr; <span class="new"></span></span>' +
-          '<span class="meta"></span>';
-        row.querySelector('.campo').textContent = (CAMPO_LABEL[c.campo_cambiado] || c.campo_cambiado) + ':';
-        row.querySelector('.old').textContent = formatValor(c.valor_anterior);
-        row.querySelector('.new').textContent = formatValor(c.valor_nuevo);
-        row.querySelector('.meta').textContent = c.usuario + ' · ' + formatFechaHora(c.fecha_hora);
-        lista.appendChild(row);
-      });
-      div.appendChild(lista);
+      const meta = document.createElement('div');
+      meta.className = 'report-meta';
+      meta.innerHTML =
+        '<span><strong>Responsable:</strong> ' + escapeHtml(item.dueno_seguimiento || '(sin asignar)') + '</span>' +
+        '<span><strong>Fecha de compromiso:</strong> ' + (item.fecha_compromiso ? escapeHtml(formatFechaCorta(item.fecha_compromiso)) : '(sin definir)') + '</span>';
+      div.appendChild(meta);
+
+      // Segunda parte, separada visualmente de la cabecera: la bitácora de
+      // notas — una línea por nota, con su fecha, sin decir quién la
+      // escribió (no importa aquí, según pediste).
+      const notasDiv = document.createElement('div');
+      notasDiv.className = 'report-notas';
+      if (notas.length === 0) {
+        notasDiv.innerHTML = '<div class="report-sin-notas">Todavía no tiene notas de seguimiento.</div>';
+      } else {
+        notas.forEach(n => {
+          const row = document.createElement('div');
+          row.className = 'report-nota-row';
+          row.innerHTML = '<span class="fecha"></span><span class="texto"></span>';
+          row.querySelector('.fecha').textContent = formatFechaHora(n.fecha);
+          row.querySelector('.texto').textContent = n.comentario;
+          notasDiv.appendChild(row);
+        });
+      }
+      div.appendChild(notasDiv);
 
       body.appendChild(div);
     });
   }
 
-  document.getElementById('report-mes').addEventListener('change', renderInforme);
+  document.getElementById('report-categoria').addEventListener('change', renderAvance);
+  document.getElementById('report-item').addEventListener('input', renderAvance);
 
   // BACKLOG se llena con GET /api/items al cargar la página. DETAIL_CACHE
   // guarda el detalle completo (evidencia, actividad propuesta, etc.) de
@@ -782,6 +896,12 @@
   let BACKLOG = [];
   const DETAIL_CACHE = {};
   const OPEN_ROWS = new Set();
+  // NOTAS_CACHE: codigo -> arreglo de notas (tabla NotasSeguimiento, Hito 7),
+  // undefined mientras carga. NOTAS_ERROR: codigo -> mensaje, si falló la
+  // carga. Igual que DETAIL_CACHE, se llenan la primera vez que se abre la
+  // fila de un item y persisten entre re-renders.
+  const NOTAS_CACHE = {};
+  const NOTAS_ERROR = {};
 
   async function cargarBacklog() {
     const loadState = document.getElementById('load-state');
@@ -797,6 +917,10 @@
       renderPanorama();
       renderFiltros();
       render();
+      // El avance de items depende de BACKLOG (necesita el estado actual de
+      // cada item) — por eso se dispara desde aquí y no en paralelo con las
+      // demás cargas iniciales, a diferencia de cargarActividad().
+      cargarAvance();
     } catch (err) {
       loadState.textContent = 'No se pudo cargar el backlog (' + err.message + '). Recarga la página para reintentar — si la base de datos estaba dormida, el primer intento a veces falla y el siguiente funciona.';
       loadState.classList.add('error');
@@ -935,6 +1059,7 @@
     if (willOpen) {
       OPEN_ROWS.add(codigo);
       if (!DETAIL_CACHE[codigo]) cargarDetalle(codigo, detail);
+      if (!NOTAS_CACHE[codigo] && !NOTAS_ERROR[codigo]) cargarNotas(codigo, detail);
     } else {
       OPEN_ROWS.delete(codigo);
     }
@@ -948,6 +1073,36 @@
       return;
     }
     const d = cached;
+
+    // Sección de notas: independiente de d (viene de NOTAS_CACHE, cargada
+    // aparte por cargarNotas). Puede seguir "cargando" incluso cuando el
+    // resto del detalle ya está listo, o viceversa — cada fetch actualiza
+    // su parte y vuelve a llamar renderDetailBody.
+    let notasHtml;
+    if (NOTAS_ERROR[codigo]) {
+      notasHtml = '<div class="nota-empty nota-error">No se pudieron cargar las notas (' + escapeHtml(NOTAS_ERROR[codigo]) + ').</div>';
+    } else if (!NOTAS_CACHE[codigo]) {
+      notasHtml = '<div class="nota-loading">Cargando notas&hellip;</div>';
+    } else if (NOTAS_CACHE[codigo].length === 0) {
+      notasHtml = '<div class="nota-empty">Todavía no hay notas de seguimiento para este item.</div>';
+    } else {
+      notasHtml = NOTAS_CACHE[codigo].map(n =>
+        '<div class="nota-item">' +
+          '<div class="nota-item-meta">' + escapeHtml(n.usuario) + ' · ' + formatFechaHora(n.fecha) + '</div>' +
+          '<div class="nota-item-texto">' + escapeHtml(n.comentario) + '</div>' +
+        '</div>'
+      ).join('');
+    }
+
+    // Máquina de estados (Hito 7): Cancelado/Finalizado son terminales — el
+    // item queda de solo lectura, tanto aquí como del lado del servidor
+    // (items-update.ts y notas-add.ts rechazan cualquier intento). Y una
+    // vez que el item salió de "Pendiente" ya no puede volver, así que esa
+    // opción se quita del <select> en cuanto deja de ser el valor actual.
+    const bloqueadoPermanente = d.estado === 'Cancelado' || d.estado === 'Finalizado';
+    const disabledAttr = bloqueadoPermanente ? ' disabled' : '';
+    const opcionesEstado = d.estado === 'Pendiente' ? ESTADO_ORDER : ESTADO_ORDER.filter(e => e !== 'Pendiente');
+
     td.innerHTML =
       '<div class="detail-grid">' +
         '<div class="detail-block"><h4>Evidencia (EWA)</h4><p>' + escapeHtml(d.evidencia) + '</p></div>' +
@@ -960,33 +1115,60 @@
       '</div>' +
       '<div class="edit-form">' +
         '<h4>Actualizar seguimiento</h4>' +
+        (bloqueadoPermanente
+          ? '<div class="locked-banner">Este item ya está ' + escapeHtml(d.estado) + ' y no se puede modificar.</div>'
+          : '') +
         '<div class="edit-grid">' +
           '<div class="edit-field">' +
             '<label for="responsable-' + codigo + '">Persona responsable</label>' +
-            '<input type="text" id="responsable-' + codigo + '" placeholder="Nombre de quien le da seguimiento" value="' + escapeHtml(d.dueno_seguimiento || '') + '">' +
+            '<input type="text" id="responsable-' + codigo + '"' + disabledAttr + ' placeholder="Nombre de quien le da seguimiento" value="' + escapeHtml(d.dueno_seguimiento || '') + '">' +
           '</div>' +
           '<div class="edit-field">' +
             '<label for="estado-' + codigo + '">Estado</label>' +
-            '<select id="estado-' + codigo + '">' +
-              ESTADO_ORDER.map(e => '<option value="' + e + '"' + (e === d.estado ? ' selected' : '') + '>' + e + '</option>').join('') +
+            '<select id="estado-' + codigo + '"' + disabledAttr + '>' +
+              opcionesEstado.map(e => '<option value="' + e + '"' + (e === d.estado ? ' selected' : '') + '>' + e + '</option>').join('') +
             '</select>' +
           '</div>' +
           '<div class="edit-field">' +
             '<label for="fecha-' + codigo + '">Fecha de compromiso</label>' +
-            '<input type="date" id="fecha-' + codigo + '" value="' + (d.fecha_compromiso ? d.fecha_compromiso.slice(0,10) : '') + '">' +
+            '<input type="date" id="fecha-' + codigo + '"' + disabledAttr + ' value="' + (d.fecha_compromiso ? d.fecha_compromiso.slice(0,10) : '') + '">' +
           '</div>' +
-          '<div class="edit-field" style="grid-column: 1 / -1;">' +
-            '<label for="notas-' + codigo + '">Notas de seguimiento</label>' +
-            '<textarea id="notas-' + codigo + '">' + escapeHtml(d.notas_seguimiento || '') + '</textarea>' +
+          '<div class="edit-field nota-field" style="grid-column: 1 / -1;">' +
+            '<label>Notas de seguimiento</label>' +
+            '<div class="nota-list" id="nota-list-' + codigo + '">' + notasHtml + '</div>' +
+            '<button type="button" class="nota-toggle" id="nota-toggle-' + codigo + '"' + disabledAttr + '>' +
+              '<span class="nota-plus">+</span> Agregar nueva nota de seguimiento' +
+            '</button>' +
+            '<div class="nota-add" id="nota-add-' + codigo + '" style="display:none;">' +
+              '<textarea id="nota-texto-' + codigo + '" maxlength="500" placeholder="Escribe la nota…"></textarea>' +
+              '<div class="nota-add-actions">' +
+                '<button type="button" class="nota-save-btn" id="nota-save-' + codigo + '">Guardar nota</button>' +
+                '<span class="nota-save-status" id="nota-status-' + codigo + '"></span>' +
+              '</div>' +
+            '</div>' +
           '</div>' +
           '<div class="edit-actions">' +
-            '<button class="save-btn" type="button" id="save-' + codigo + '">Guardar cambios</button>' +
+            '<button class="save-btn" type="button" id="save-' + codigo + '"' + disabledAttr + '>Guardar cambios</button>' +
             '<span class="save-status" id="status-' + codigo + '"></span>' +
           '</div>' +
         '</div>' +
       '</div>';
 
     td.querySelector('#save-' + cssEscape(codigo)).addEventListener('click', () => guardarCambios(codigo));
+
+    // El campo de notas arranca colapsado detrás de "+ Agregar nueva nota de
+    // seguimiento" — al abrirlo aparece un textarea en blanco con su propio
+    // botón "Guardar nota" (agregarNota), separado de "Guardar cambios":
+    // cada nota es una fila nueva en NotasSeguimiento, nunca sobreescribe
+    // las anteriores (ver Hito 7 en el README).
+    const notaToggle = td.querySelector('#nota-toggle-' + cssEscape(codigo));
+    const notaAdd = td.querySelector('#nota-add-' + cssEscape(codigo));
+    notaToggle.addEventListener('click', () => {
+      notaAdd.style.display = '';
+      notaToggle.style.display = 'none';
+      document.getElementById('nota-texto-' + cssEscape(codigo)).focus();
+    });
+    td.querySelector('#nota-save-' + cssEscape(codigo)).addEventListener('click', () => agregarNota(codigo));
   }
 
   // IDs de items pueden traer guiones (BAS-01) — querySelector con # necesita
@@ -1005,13 +1187,89 @@
     }
   }
 
+  // GET /api/items/{codigo}/notas — se carga aparte del detalle del item
+  // (misma idea que cargarDetalle, cache propio) porque ahora es una tabla
+  // relacionada, no un campo más del item.
+  async function cargarNotas(codigo, detail) {
+    try {
+      const resp = await fetch('/api/items/' + encodeURIComponent(codigo) + '/notas');
+      if (!resp.ok) throw new Error('El API respondió ' + resp.status);
+      NOTAS_CACHE[codigo] = await resp.json();
+      delete NOTAS_ERROR[codigo];
+    } catch (err) {
+      NOTAS_ERROR[codigo] = err.message;
+    }
+    renderDetailBody(detail, codigo);
+  }
+
+  // POST /api/items/{codigo}/notas — agrega una nota nueva. A diferencia de
+  // guardarCambios() (que hace PATCH sobre estado/responsable/fecha), esto
+  // es un insert puro: nunca reemplaza una nota anterior. Si sale bien, la
+  // nota nueva se antepone en NOTAS_CACHE y se refresca la gráfica/avance
+  // (la nota también quedó como fila en ActivityLog).
+  //
+  // Si el item seguía "Pendiente", agregar la nota lo pasó a "En progreso"
+  // del lado del servidor (ver notas-add.ts) — la respuesta trae ese estado
+  // final en estado_item, y aquí se sincroniza en DETAIL_CACHE/BACKLOG igual
+  // que guardarCambios() hace con un PATCH normal, para que el badge de
+  // estado en la tabla y el panorama queden al día sin recargar la página.
+  async function agregarNota(codigo) {
+    const btn = document.getElementById('nota-save-' + cssEscape(codigo));
+    const statusEl = document.getElementById('nota-status-' + cssEscape(codigo));
+    const textarea = document.getElementById('nota-texto-' + cssEscape(codigo));
+    const comentario = textarea.value.trim();
+
+    if (comentario === '') {
+      statusEl.textContent = 'Escribe algo antes de guardar.';
+      statusEl.className = 'nota-save-status error';
+      return;
+    }
+
+    btn.disabled = true;
+    statusEl.textContent = 'Guardando…';
+    statusEl.className = 'nota-save-status';
+
+    try {
+      const resp = await fetch('/api/items/' + encodeURIComponent(codigo) + '/notas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comentario }),
+      });
+      if (!resp.ok) {
+        const errBody = await resp.json().catch(() => ({}));
+        throw new Error(errBody.error || ('El API respondió ' + resp.status));
+      }
+      const nueva = await resp.json();
+      NOTAS_CACHE[codigo] = [nueva, ...(NOTAS_CACHE[codigo] || [])];
+
+      if (nueva.estado_item) {
+        if (DETAIL_CACHE[codigo]) {
+          DETAIL_CACHE[codigo] = Object.assign({}, DETAIL_CACHE[codigo], { estado: nueva.estado_item });
+        }
+        const idxBacklog = BACKLOG.findIndex(d => d.codigo_item === codigo);
+        if (idxBacklog !== -1) {
+          BACKLOG[idxBacklog] = Object.assign({}, BACKLOG[idxBacklog], { estado: nueva.estado_item });
+        }
+      }
+
+      cargarActividad();
+      cargarAvance();
+      renderPanorama();
+      renderFiltros();
+      render();
+    } catch (err) {
+      statusEl.textContent = 'Error: ' + err.message;
+      statusEl.className = 'nota-save-status error';
+      btn.disabled = false;
+    }
+  }
+
   async function guardarCambios(codigo) {
     const btn = document.getElementById('save-' + cssEscape(codigo));
     const statusEl = document.getElementById('status-' + cssEscape(codigo));
     const nuevoResponsable = document.getElementById('responsable-' + cssEscape(codigo)).value;
     const nuevoEstado = document.getElementById('estado-' + cssEscape(codigo)).value;
     const nuevaFecha = document.getElementById('fecha-' + cssEscape(codigo)).value;
-    const nuevasNotas = document.getElementById('notas-' + cssEscape(codigo)).value;
 
     btn.disabled = true;
     statusEl.textContent = 'Guardando…';
@@ -1024,7 +1282,6 @@
         body: JSON.stringify({
           estado: nuevoEstado,
           dueno_seguimiento: nuevoResponsable === '' ? null : nuevoResponsable,
-          notas_seguimiento: nuevasNotas === '' ? null : nuevasNotas,
           fecha_compromiso: nuevaFecha === '' ? null : nuevaFecha,
         }),
       });
@@ -1052,9 +1309,9 @@
           });
         }
         // El PATCH generó fila(s) nuevas en ActivityLog — recarga la
-        // gráfica y el informe mensual para que también queden al día.
+        // gráfica y el avance de items para que también queden al día.
         cargarActividad();
-        cargarInforme();
+        cargarAvance();
       }
 
       const mensajeOk = huboCambio ? 'Guardado ✓' : 'Sin cambios (ya tenía esos valores)';
@@ -1083,9 +1340,24 @@
   document.getElementById('filter-prioridad').addEventListener('change', render);
   document.getElementById('filter-estado').addEventListener('change', render);
 
+  // ---- Navegación (panel izquierdo) ----
+  // Dos "páginas" cliente-side dentro de #app-content — nunca se recarga la
+  // página ni se vuelve a pedir datos al cambiar, solo se muestra/oculta.
+  const PAGINAS = ['vitrina', 'reporteo'];
+  function mostrarPagina(pagina) {
+    PAGINAS.forEach(p => {
+      document.getElementById('page-' + p).style.display = p === pagina ? '' : 'none';
+      document.getElementById('nav-' + p).classList.toggle('active', p === pagina);
+    });
+  }
+  PAGINAS.forEach(p => {
+    document.getElementById('nav-' + p).addEventListener('click', () => mostrarPagina(p));
+  });
+
+  // cargarAvance() no va aquí: depende de BACKLOG y se dispara desde dentro
+  // de cargarBacklog() una vez que ese fetch termina (ver ahí el porqué).
   cargarBacklog();
   cargarActividad();
-  cargarInforme();
 </script>
 </body>
 </html>
