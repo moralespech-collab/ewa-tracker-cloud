@@ -24,6 +24,14 @@
 // (VARCHAR(100) nullable), misma regla de terminales (bloqueado si el item
 // ya está Cancelado/Finalizado).
 //
+// Hito 12: prioridad también se vuelve editable. Desde el Hito 10, categoria/
+// hallazgo/evidencia/actividad_propuesta/prioridad quedaron de solo lectura
+// a propósito (vienen del EWA, se corrigen por SQL si hace falta) — Javi
+// pidió reabrir explícitamente solo prioridad, no los demás campos: en la
+// práctica la prioridad de un hallazgo puede cambiar con el tiempo (algo que
+// empezó en Baja se vuelve urgente, o viceversa) y no tiene caso pedirle una
+// corrección SQL para eso. Validada igual que estado, contra una lista fija.
+//
 // Hito 7 (ajuste): máquina de estados. Reglas, en las palabras de Javi:
 //   - Una vez que un item sale de "Pendiente", nunca puede volver ahí.
 //   - "Cancelado" y "Finalizado" son terminales: el item ya no se puede
@@ -41,10 +49,11 @@ import { obtenerUsuario } from "../auth";
 
 const ESTADOS_VALIDOS = ["Pendiente", "En progreso", "Finalizado", "Bloqueado", "Cancelado"];
 const ESTADOS_TERMINALES = ["Cancelado", "Finalizado"];
+const PRIORIDADES_VALIDAS = ["Alta", "Media", "Baja"];
 
 // Whitelist a propósito: nunca se arma SQL con nombres de columna que vengan
-// del body de la petición, solo con estos tres, elegidos a mano.
-const CAMPOS_EDITABLES = ["estado", "dueno_seguimiento", "aprobador", "fecha_compromiso"] as const;
+// del body de la petición, solo con estos, elegidos a mano.
+const CAMPOS_EDITABLES = ["estado", "dueno_seguimiento", "aprobador", "prioridad", "fecha_compromiso"] as const;
 type CampoEditable = (typeof CAMPOS_EDITABLES)[number];
 
 export async function itemsUpdate(
@@ -91,6 +100,19 @@ export async function itemsUpdate(
     };
   }
 
+  // prioridad es NOT NULL en la tabla (a diferencia de aprobador/dueno_seguimiento,
+  // que sí aceptan null) — a propósito no se permite "vaciar" la prioridad, solo
+  // cambiarla entre los tres valores válidos.
+  if (
+    cambios.prioridad !== undefined &&
+    (cambios.prioridad === null || !PRIORIDADES_VALIDAS.includes(cambios.prioridad))
+  ) {
+    return {
+      status: 400,
+      jsonBody: { error: `Prioridad invalida. Valores permitidos: ${PRIORIDADES_VALIDAS.join(", ")}.` },
+    };
+  }
+
   const usuario = obtenerUsuario(request);
   const pool = await getPool();
   const transaction = new sql.Transaction(pool);
@@ -101,7 +123,7 @@ export async function itemsUpdate(
       .request()
       .input("codigo", sql.VarChar(20), codigo)
       .query(`
-        SELECT id, estado, dueno_seguimiento, aprobador, fecha_compromiso
+        SELECT id, estado, dueno_seguimiento, aprobador, prioridad, fecha_compromiso
         FROM Items
         WHERE codigo_item = @codigo
       `);
@@ -164,6 +186,9 @@ export async function itemsUpdate(
       } else if (campo === "aprobador") {
         setClauses.push("aprobador = @aprobador");
         updateRequest.input("aprobador", sql.VarChar(100), nuevoValor);
+      } else if (campo === "prioridad") {
+        setClauses.push("prioridad = @prioridad");
+        updateRequest.input("prioridad", sql.VarChar(10), nuevoValor);
       } else if (campo === "fecha_compromiso") {
         setClauses.push("fecha_compromiso = @fecha_compromiso");
         updateRequest.input("fecha_compromiso", sql.Date, nuevoValor ? new Date(nuevoValor) : null);
