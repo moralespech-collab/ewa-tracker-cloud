@@ -1,6 +1,11 @@
 // GET /api/items/{codigo} — detalle completo de un item (incluye los campos
 // de texto largo que la lista deliberadamente no trae: evidencia, actividad
-// propuesta, notas de seguimiento), más el EWA del que viene.
+// propuesta), más el EWA del que viene.
+//
+// Hito 7: notas_seguimiento salió de esta respuesta. Las notas ahora viven
+// en su propia tabla y se piden aparte con GET /api/items/{codigo}/notas
+// (ver notas-list.ts) — no tiene sentido traerlas aquí "por si acaso" cuando
+// además pueden ser varias, no una sola.
 
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import sql from "mssql";
@@ -19,7 +24,7 @@ export async function itemsDetail(
     .query(`
       SELECT i.codigo_item, i.categoria, i.hallazgo, i.evidencia, i.actividad_propuesta,
              i.prioridad, i.dueno_seguimiento, i.ejecutor, i.aprobador, i.estado,
-             i.fecha_compromiso, i.notas_seguimiento,
+             i.fecha_compromiso,
              e.codigo_ewa, e.fecha_desde, e.fecha_hasta
       FROM Items i
       JOIN EWAs e ON e.id = i.ewa_id

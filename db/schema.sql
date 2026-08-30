@@ -58,3 +58,25 @@ CREATE TABLE ActivityLog (
 -- ayudan a que las consultas por item no escaneen la tabla completa.
 CREATE INDEX IX_Items_EwaId ON Items(ewa_id);
 CREATE INDEX IX_ActivityLog_ItemId ON ActivityLog(item_id);
+
+-- Hito 7 — NotasSeguimiento: bitácora de notas por item (uno-a-muchos), en
+-- vez del campo Items.notas_seguimiento (que se sobreescribía en cada
+-- guardado y no dejaba historial). Cada nota agregada además genera su
+-- propia fila en ActivityLog (campo_cambiado = 'nota_seguimiento',
+-- comentario = texto de la nota), para que aparezca en el informe mensual
+-- igual que cualquier otro cambio.
+--
+-- Items.notas_seguimiento se deja en la tabla (no se borra la columna) por
+-- ahora — dejó de leerse/escribirse desde la API, pero tumbar una columna
+-- es un cambio que no se puede deshacer sin restaurar un backup, así que
+-- se queda ahí hasta que estemos seguros de que ya no hace falta. Ver
+-- db/migration-hito7-notas-seguimiento.sql para el script que crea esta
+-- tabla y migra las notas que ya existían en esa columna.
+CREATE TABLE NotasSeguimiento (
+    id          INT IDENTITY(1,1) PRIMARY KEY,
+    item_id     INT NOT NULL REFERENCES Items(id),
+    usuario     VARCHAR(100) NOT NULL,
+    fecha       DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    comentario  NVARCHAR(500) NOT NULL
+);
+CREATE INDEX IX_NotasSeguimiento_ItemId ON NotasSeguimiento(item_id);

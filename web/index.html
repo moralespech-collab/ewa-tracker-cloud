@@ -256,6 +256,35 @@
     border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px;
   }
   .edit-field textarea { resize: vertical; min-height: 56px; }
+  .nota-list { display: flex; flex-direction: column; gap: 8px; margin: 0 0 8px; }
+  .nota-item {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px;
+  }
+  .nota-item-meta { font-size: 0.74rem; color: var(--text-muted); margin-bottom: 3px; }
+  .nota-item-texto { font-size: 0.85rem; color: var(--text-primary); white-space: pre-wrap; }
+  .nota-empty, .nota-loading { font-size: 0.82rem; color: var(--text-muted); margin: 0 0 8px; }
+  .nota-empty.nota-error { color: #c0392b; }
+  .nota-toggle {
+    display: inline-flex; align-items: center; gap: 8px;
+    font: inherit; font-size: 0.86rem; font-weight: 600; cursor: pointer;
+    background: none; border: none; padding: 4px 0; color: var(--accent);
+  }
+  .nota-toggle .nota-plus {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; border-radius: 50%; flex: none;
+    background: var(--accent); color: #fff; font-size: 0.9rem; line-height: 1;
+  }
+  .nota-add { margin-top: 8px; }
+  .nota-add-actions { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .nota-save-btn {
+    font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer;
+    background: var(--accent); color: #fff; border: none; border-radius: 8px;
+    padding: 6px 14px;
+  }
+  .nota-save-btn:disabled { opacity: 0.6; cursor: default; }
+  .nota-save-status { font-size: 0.78rem; color: var(--text-muted); }
+  .nota-save-status.error { color: #c0392b; }
   .edit-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; margin-top: 4px; }
   .save-btn {
     font: inherit; font-size: 0.86rem; font-weight: 600; cursor: pointer;
@@ -701,7 +730,8 @@
   const CAMPO_LABEL = {
     estado: "Estado",
     dueno_seguimiento: "Persona responsable",
-    notas_seguimiento: "Notas de seguimiento",
+    notas_seguimiento: "Notas de seguimiento", // valor histórico, de antes de Hito 7
+    nota_seguimiento: "Nota de seguimiento agregada",
     fecha_compromiso: "Fecha de compromiso"
   };
   function truncar(s, n) {
@@ -837,13 +867,22 @@
       item.cambios.forEach(c => {
         const row = document.createElement('div');
         row.className = 'report-change-row';
-        row.innerHTML =
-          '<span class="campo"></span>' +
-          '<span class="valores"><span class="old"></span> &rarr; <span class="new"></span></span>' +
-          '<span class="meta"></span>';
-        row.querySelector('.campo').textContent = (CAMPO_LABEL[c.campo_cambiado] || c.campo_cambiado) + ':';
-        row.querySelector('.old').textContent = formatValor(c.valor_anterior);
-        row.querySelector('.new').textContent = formatValor(c.valor_nuevo);
+        // Una nota de seguimiento nueva no tiene "antes → después" — es
+        // texto agregado, no un campo que cambió — así que se muestra el
+        // comentario completo en vez de las flechas old → new.
+        if (c.campo_cambiado === 'nota_seguimiento') {
+          row.innerHTML = '<span class="campo"></span><span class="valores nota-valor"></span><span class="meta"></span>';
+          row.querySelector('.campo').textContent = (CAMPO_LABEL[c.campo_cambiado] || c.campo_cambiado) + ':';
+          row.querySelector('.nota-valor').textContent = formatValor(c.comentario);
+        } else {
+          row.innerHTML =
+            '<span class="campo"></span>' +
+            '<span class="valores"><span class="old"></span> &rarr; <span class="new"></span></span>' +
+            '<span class="meta"></span>';
+          row.querySelector('.campo').textContent = (CAMPO_LABEL[c.campo_cambiado] || c.campo_cambiado) + ':';
+          row.querySelector('.old').textContent = formatValor(c.valor_anterior);
+          row.querySelector('.new').textContent = formatValor(c.valor_nuevo);
+        }
         row.querySelector('.meta').textContent = c.usuario + ' · ' + formatFechaHora(c.fecha_hora);
         lista.appendChild(row);
       });
@@ -864,6 +903,12 @@
   let BACKLOG = [];
   const DETAIL_CACHE = {};
   const OPEN_ROWS = new Set();
+  // NOTAS_CACHE: codigo -> arreglo de notas (tabla NotasSeguimiento, Hito 7),
+  // undefined mientras carga. NOTAS_ERROR: codigo -> mensaje, si falló la
+  // carga. Igual que DETAIL_CACHE, se llenan la primera vez que se abre la
+  // fila de un item y persisten entre re-renders.
+  const NOTAS_CACHE = {};
+  const NOTAS_ERROR = {};
 
   async function cargarBacklog() {
     const loadState = document.getElementById('load-state');
@@ -1017,6 +1062,7 @@
     if (willOpen) {
       OPEN_ROWS.add(codigo);
       if (!DETAIL_CACHE[codigo]) cargarDetalle(codigo, detail);
+      if (!NOTAS_CACHE[codigo] && !NOTAS_ERROR[codigo]) cargarNotas(codigo, detail);
     } else {
       OPEN_ROWS.delete(codigo);
     }
@@ -1030,6 +1076,27 @@
       return;
     }
     const d = cached;
+
+    // Sección de notas: independiente de d (viene de NOTAS_CACHE, cargada
+    // aparte por cargarNotas). Puede seguir "cargando" incluso cuando el
+    // resto del detalle ya está listo, o viceversa — cada fetch actualiza
+    // su parte y vuelve a llamar renderDetailBody.
+    let notasHtml;
+    if (NOTAS_ERROR[codigo]) {
+      notasHtml = '<div class="nota-empty nota-error">No se pudieron cargar las notas (' + escapeHtml(NOTAS_ERROR[codigo]) + ').</div>';
+    } else if (!NOTAS_CACHE[codigo]) {
+      notasHtml = '<div class="nota-loading">Cargando notas&hellip;</div>';
+    } else if (NOTAS_CACHE[codigo].length === 0) {
+      notasHtml = '<div class="nota-empty">Todavía no hay notas de seguimiento para este item.</div>';
+    } else {
+      notasHtml = NOTAS_CACHE[codigo].map(n =>
+        '<div class="nota-item">' +
+          '<div class="nota-item-meta">' + escapeHtml(n.usuario) + ' · ' + formatFechaHora(n.fecha) + '</div>' +
+          '<div class="nota-item-texto">' + escapeHtml(n.comentario) + '</div>' +
+        '</div>'
+      ).join('');
+    }
+
     td.innerHTML =
       '<div class="detail-grid">' +
         '<div class="detail-block"><h4>Evidencia (EWA)</h4><p>' + escapeHtml(d.evidencia) + '</p></div>' +
@@ -1057,9 +1124,19 @@
             '<label for="fecha-' + codigo + '">Fecha de compromiso</label>' +
             '<input type="date" id="fecha-' + codigo + '" value="' + (d.fecha_compromiso ? d.fecha_compromiso.slice(0,10) : '') + '">' +
           '</div>' +
-          '<div class="edit-field" style="grid-column: 1 / -1;">' +
-            '<label for="notas-' + codigo + '">Notas de seguimiento</label>' +
-            '<textarea id="notas-' + codigo + '">' + escapeHtml(d.notas_seguimiento || '') + '</textarea>' +
+          '<div class="edit-field nota-field" style="grid-column: 1 / -1;">' +
+            '<label>Notas de seguimiento</label>' +
+            '<div class="nota-list" id="nota-list-' + codigo + '">' + notasHtml + '</div>' +
+            '<button type="button" class="nota-toggle" id="nota-toggle-' + codigo + '">' +
+              '<span class="nota-plus">+</span> Agregar nueva nota de seguimiento' +
+            '</button>' +
+            '<div class="nota-add" id="nota-add-' + codigo + '" style="display:none;">' +
+              '<textarea id="nota-texto-' + codigo + '" maxlength="500" placeholder="Escribe la nota…"></textarea>' +
+              '<div class="nota-add-actions">' +
+                '<button type="button" class="nota-save-btn" id="nota-save-' + codigo + '">Guardar nota</button>' +
+                '<span class="nota-save-status" id="nota-status-' + codigo + '"></span>' +
+              '</div>' +
+            '</div>' +
           '</div>' +
           '<div class="edit-actions">' +
             '<button class="save-btn" type="button" id="save-' + codigo + '">Guardar cambios</button>' +
@@ -1069,6 +1146,20 @@
       '</div>';
 
     td.querySelector('#save-' + cssEscape(codigo)).addEventListener('click', () => guardarCambios(codigo));
+
+    // El campo de notas arranca colapsado detrás de "+ Agregar nueva nota de
+    // seguimiento" — al abrirlo aparece un textarea en blanco con su propio
+    // botón "Guardar nota" (agregarNota), separado de "Guardar cambios":
+    // cada nota es una fila nueva en NotasSeguimiento, nunca sobreescribe
+    // las anteriores (ver Hito 7 en el README).
+    const notaToggle = td.querySelector('#nota-toggle-' + cssEscape(codigo));
+    const notaAdd = td.querySelector('#nota-add-' + cssEscape(codigo));
+    notaToggle.addEventListener('click', () => {
+      notaAdd.style.display = '';
+      notaToggle.style.display = 'none';
+      document.getElementById('nota-texto-' + cssEscape(codigo)).focus();
+    });
+    td.querySelector('#nota-save-' + cssEscape(codigo)).addEventListener('click', () => agregarNota(codigo, detail));
   }
 
   // IDs de items pueden traer guiones (BAS-01) — querySelector con # necesita
@@ -1087,13 +1178,70 @@
     }
   }
 
+  // GET /api/items/{codigo}/notas — se carga aparte del detalle del item
+  // (misma idea que cargarDetalle, cache propio) porque ahora es una tabla
+  // relacionada, no un campo más del item.
+  async function cargarNotas(codigo, detail) {
+    try {
+      const resp = await fetch('/api/items/' + encodeURIComponent(codigo) + '/notas');
+      if (!resp.ok) throw new Error('El API respondió ' + resp.status);
+      NOTAS_CACHE[codigo] = await resp.json();
+      delete NOTAS_ERROR[codigo];
+    } catch (err) {
+      NOTAS_ERROR[codigo] = err.message;
+    }
+    renderDetailBody(detail, codigo);
+  }
+
+  // POST /api/items/{codigo}/notas — agrega una nota nueva. A diferencia de
+  // guardarCambios() (que hace PATCH sobre estado/responsable/fecha), esto
+  // es un insert puro: nunca reemplaza una nota anterior. Si sale bien, la
+  // nota nueva se antepone en NOTAS_CACHE y se refresca la gráfica/informe
+  // (la nota también quedó como fila en ActivityLog).
+  async function agregarNota(codigo, detail) {
+    const btn = document.getElementById('nota-save-' + cssEscape(codigo));
+    const statusEl = document.getElementById('nota-status-' + cssEscape(codigo));
+    const textarea = document.getElementById('nota-texto-' + cssEscape(codigo));
+    const comentario = textarea.value.trim();
+
+    if (comentario === '') {
+      statusEl.textContent = 'Escribe algo antes de guardar.';
+      statusEl.className = 'nota-save-status error';
+      return;
+    }
+
+    btn.disabled = true;
+    statusEl.textContent = 'Guardando…';
+    statusEl.className = 'nota-save-status';
+
+    try {
+      const resp = await fetch('/api/items/' + encodeURIComponent(codigo) + '/notas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comentario }),
+      });
+      if (!resp.ok) {
+        const errBody = await resp.json().catch(() => ({}));
+        throw new Error(errBody.error || ('El API respondió ' + resp.status));
+      }
+      const nueva = await resp.json();
+      NOTAS_CACHE[codigo] = [nueva, ...(NOTAS_CACHE[codigo] || [])];
+      cargarActividad();
+      cargarInforme();
+      renderDetailBody(detail, codigo);
+    } catch (err) {
+      statusEl.textContent = 'Error: ' + err.message;
+      statusEl.className = 'nota-save-status error';
+      btn.disabled = false;
+    }
+  }
+
   async function guardarCambios(codigo) {
     const btn = document.getElementById('save-' + cssEscape(codigo));
     const statusEl = document.getElementById('status-' + cssEscape(codigo));
     const nuevoResponsable = document.getElementById('responsable-' + cssEscape(codigo)).value;
     const nuevoEstado = document.getElementById('estado-' + cssEscape(codigo)).value;
     const nuevaFecha = document.getElementById('fecha-' + cssEscape(codigo)).value;
-    const nuevasNotas = document.getElementById('notas-' + cssEscape(codigo)).value;
 
     btn.disabled = true;
     statusEl.textContent = 'Guardando…';
@@ -1106,7 +1254,6 @@
         body: JSON.stringify({
           estado: nuevoEstado,
           dueno_seguimiento: nuevoResponsable === '' ? null : nuevoResponsable,
-          notas_seguimiento: nuevasNotas === '' ? null : nuevasNotas,
           fecha_compromiso: nuevaFecha === '' ? null : nuevaFecha,
         }),
       });
