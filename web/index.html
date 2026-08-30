@@ -1453,8 +1453,9 @@
   // Vitrina a sacar esto aparte: mismas 5 columnas que espera POST
   // /api/items/import, así sirve directo de referencia de "qué ya está
   // trackeado" al comparar contra el reporte EWA nuevo. Pide GET
-  // /api/items/export (no BACKLOG, que no trae evidencia/actividad_propuesta
-  // — ver items-export-full.ts) solo cuando se le da click al botón, no en
+  // /api/items-export (no BACKLOG, que no trae evidencia/actividad_propuesta
+  // — ver items-export-full.ts, y por qué la ruta lleva guion en vez de ir
+  // anidada bajo items/) solo cuando se le da click al botón, no en
   // cada carga de la app.
   async function descargarBacklogActual() {
     const btn = document.getElementById('csv-backlog-actual-btn');
@@ -1463,7 +1464,7 @@
     statusEl.textContent = 'Generando…';
     statusEl.className = 'save-status';
     try {
-      const resp = await fetch('/api/items/export');
+      const resp = await fetch('/api/items-export');
       if (!resp.ok) throw new Error('El API respondió ' + resp.status);
       const items = await resp.json();
       const encabezados = ['Categoría', 'Hallazgo', 'Evidencia', 'Actividad Propuesta', 'Prioridad'];
