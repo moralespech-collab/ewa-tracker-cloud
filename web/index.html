@@ -207,6 +207,11 @@
     color: var(--text-muted); font-weight: 700; padding: 8px 10px;
     border-bottom: 1px solid var(--baseline);
   }
+  table.backlog thead th.sortable { cursor: pointer; user-select: none; }
+  table.backlog thead th.sortable:hover { color: var(--text-primary); }
+  table.backlog thead th.sortable .sort-arrow { display: inline-block; width: 0.9em; opacity: 0.35; }
+  table.backlog thead th.sortable.sort-active { color: var(--text-primary); }
+  table.backlog thead th.sortable.sort-active .sort-arrow { opacity: 1; }
   table.backlog tbody tr.main-row { border-bottom: 1px solid var(--gridline); cursor: pointer; }
   table.backlog tbody tr.main-row:hover { background: var(--card-bg); }
   table.backlog td { padding: 10px 10px; vertical-align: top; }
@@ -379,12 +384,12 @@
             <div class="result-count" id="result-count"></div>
             <table class="backlog">
               <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Categor&iacute;a</th>
-                  <th>Hallazgo</th>
-                  <th>Prioridad</th>
-                  <th>Estado</th>
+                <tr id="table-head-row">
+                  <th class="sortable" data-field="codigo_item">ID <span class="sort-arrow"></span></th>
+                  <th class="sortable" data-field="categoria">Categor&iacute;a <span class="sort-arrow"></span></th>
+                  <th class="sortable" data-field="hallazgo">Hallazgo <span class="sort-arrow"></span></th>
+                  <th class="sortable" data-field="prioridad">Prioridad <span class="sort-arrow"></span></th>
+                  <th class="sortable" data-field="estado">Estado <span class="sort-arrow"></span></th>
                 </tr>
               </thead>
               <tbody id="table-body"></tbody>
@@ -959,6 +964,66 @@
   const NOTAS_CACHE = {};
   const NOTAS_ERROR = {};
 
+  // Hito 12: ordenamiento por columna, con click en el encabezado. SORT_FIELD
+  // null = sin override del usuario, se respeta el orden que ya trae GET
+  // /api/items (prioridad Alta->Media->Baja, luego codigo_item — ver
+  // items-list.ts). En cuanto se hace click en un encabezado, ese orden pasa
+  // a mandar hasta que se recargue la página o se haga click en otro.
+  let SORT_FIELD = null;
+  let SORT_DIR = 'asc'; // 'asc' | 'desc'
+
+  // Prioridad y estado no se ordenan alfabéticamente — se ordenan por el
+  // mismo rango de severidad/avance que ya usan el resto de la vitrina
+  // (PRIORITY_ORDER / ESTADO_ORDER), para que "ascendente" signifique algo
+  // (Alta primero, o Pendiente primero) y no solo el orden del alfabeto.
+  const SORT_RANGO = {
+    prioridad: PRIORITY_ORDER,
+    estado: ESTADO_ORDER,
+  };
+
+  function compararPorCampo(a, b, campo) {
+    const rango = SORT_RANGO[campo];
+    if (rango) {
+      const ra = rango.indexOf(a[campo]);
+      const rb = rango.indexOf(b[campo]);
+      return (ra === -1 ? rango.length : ra) - (rb === -1 ? rango.length : rb);
+    }
+    return String(a[campo] || '').localeCompare(String(b[campo] || ''), 'es', { sensitivity: 'base' });
+  }
+
+  function ordenarSiAplica(filas) {
+    if (!SORT_FIELD) return filas;
+    const copia = filas.slice();
+    copia.sort((a, b) => {
+      const cmp = compararPorCampo(a, b, SORT_FIELD);
+      return SORT_DIR === 'asc' ? cmp : -cmp;
+    });
+    return copia;
+  }
+
+  function actualizarEncabezadosOrden() {
+    document.querySelectorAll('#table-head-row th.sortable').forEach(th => {
+      const campo = th.dataset.field;
+      const arrow = th.querySelector('.sort-arrow');
+      const activo = campo === SORT_FIELD;
+      th.classList.toggle('sort-active', activo);
+      arrow.textContent = activo ? (SORT_DIR === 'asc' ? '▲' : '▼') : '▲';
+    });
+  }
+
+  document.getElementById('table-head-row').addEventListener('click', (ev) => {
+    const th = ev.target.closest('th.sortable');
+    if (!th) return;
+    const campo = th.dataset.field;
+    if (SORT_FIELD === campo) {
+      SORT_DIR = SORT_DIR === 'asc' ? 'desc' : 'asc';
+    } else {
+      SORT_FIELD = campo;
+      SORT_DIR = 'asc';
+    }
+    render();
+  });
+
   async function cargarBacklog() {
     const loadState = document.getElementById('load-state');
     const appContent = document.getElementById('app-content');
@@ -1080,10 +1145,12 @@
     });
 
     resultCount.textContent = filtered.length + ' de ' + BACKLOG.length + ' actividades';
-    FILTERED_ACTUAL = filtered;
+    const ordenado = ordenarSiAplica(filtered);
+    FILTERED_ACTUAL = ordenado;
+    actualizarEncabezadosOrden();
 
     tbody.innerHTML = '';
-    filtered.forEach((d) => {
+    ordenado.forEach((d) => {
       const prio = PRIORITY_META[d.prioridad] || { hex: '#898781', label: d.prioridad };
       const eColor = estadoColor(d.estado);
       const codigo = d.codigo_item;
@@ -1186,6 +1253,12 @@
             '<label for="estado-' + codigo + '">Estado</label>' +
             '<select id="estado-' + codigo + '"' + disabledAttr + '>' +
               opcionesEstado.map(e => '<option value="' + e + '"' + (e === d.estado ? ' selected' : '') + '>' + e + '</option>').join('') +
+            '</select>' +
+          '</div>' +
+          '<div class="edit-field">' +
+            '<label for="prioridad-' + codigo + '">Prioridad</label>' +
+            '<select id="prioridad-' + codigo + '"' + disabledAttr + '>' +
+              PRIORITY_ORDER.map(p => '<option value="' + p + '"' + (p === d.prioridad ? ' selected' : '') + '>' + p + '</option>').join('') +
             '</select>' +
           '</div>' +
           '<div class="edit-field">' +
@@ -1329,6 +1402,7 @@
     const nuevoResponsable = document.getElementById('responsable-' + cssEscape(codigo)).value;
     const nuevoAprobador = document.getElementById('aprobador-' + cssEscape(codigo)).value;
     const nuevoEstado = document.getElementById('estado-' + cssEscape(codigo)).value;
+    const nuevaPrioridad = document.getElementById('prioridad-' + cssEscape(codigo)).value;
     const nuevaFecha = document.getElementById('fecha-' + cssEscape(codigo)).value;
 
     btn.disabled = true;
@@ -1343,6 +1417,7 @@
           estado: nuevoEstado,
           dueno_seguimiento: nuevoResponsable === '' ? null : nuevoResponsable,
           aprobador: nuevoAprobador === '' ? null : nuevoAprobador,
+          prioridad: nuevaPrioridad,
           fecha_compromiso: nuevaFecha === '' ? null : nuevaFecha,
         }),
       });
@@ -1367,6 +1442,7 @@
             estado: actualizado.estado,
             dueno_seguimiento: actualizado.dueno_seguimiento,
             aprobador: actualizado.aprobador,
+            prioridad: actualizado.prioridad,
             fecha_compromiso: actualizado.fecha_compromiso,
           });
         }
