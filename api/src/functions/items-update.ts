@@ -16,6 +16,14 @@
 // fusionó en dueno_seguimiento (nunca fue un campo editable aquí, pero se
 // devolvía en el item actualizado; ya no tiene caso).
 //
+// Hito 11: aprobador se vuelve editable. Antes se mostraba en la vitrina
+// como dato de solo lectura (venía del Excel del Hito 3) y desde el reinicio
+// de la base de datos (import por CSV) siempre queda NULL, sin ninguna
+// forma de llenarlo — Javi pidió poder editarlo igual que el responsable.
+// Incluido en el whitelist justo como dueno_seguimiento: mismo tipo
+// (VARCHAR(100) nullable), misma regla de terminales (bloqueado si el item
+// ya está Cancelado/Finalizado).
+//
 // Hito 7 (ajuste): máquina de estados. Reglas, en las palabras de Javi:
 //   - Una vez que un item sale de "Pendiente", nunca puede volver ahí.
 //   - "Cancelado" y "Finalizado" son terminales: el item ya no se puede
@@ -36,7 +44,7 @@ const ESTADOS_TERMINALES = ["Cancelado", "Finalizado"];
 
 // Whitelist a propósito: nunca se arma SQL con nombres de columna que vengan
 // del body de la petición, solo con estos tres, elegidos a mano.
-const CAMPOS_EDITABLES = ["estado", "dueno_seguimiento", "fecha_compromiso"] as const;
+const CAMPOS_EDITABLES = ["estado", "dueno_seguimiento", "aprobador", "fecha_compromiso"] as const;
 type CampoEditable = (typeof CAMPOS_EDITABLES)[number];
 
 export async function itemsUpdate(
@@ -93,7 +101,7 @@ export async function itemsUpdate(
       .request()
       .input("codigo", sql.VarChar(20), codigo)
       .query(`
-        SELECT id, estado, dueno_seguimiento, fecha_compromiso
+        SELECT id, estado, dueno_seguimiento, aprobador, fecha_compromiso
         FROM Items
         WHERE codigo_item = @codigo
       `);
@@ -153,6 +161,9 @@ export async function itemsUpdate(
       } else if (campo === "dueno_seguimiento") {
         setClauses.push("dueno_seguimiento = @dueno_seguimiento");
         updateRequest.input("dueno_seguimiento", sql.VarChar(100), nuevoValor);
+      } else if (campo === "aprobador") {
+        setClauses.push("aprobador = @aprobador");
+        updateRequest.input("aprobador", sql.VarChar(100), nuevoValor);
       } else if (campo === "fecha_compromiso") {
         setClauses.push("fecha_compromiso = @fecha_compromiso");
         updateRequest.input("fecha_compromiso", sql.Date, nuevoValor ? new Date(nuevoValor) : null);
