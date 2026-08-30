@@ -11,6 +11,16 @@
 //
 // Las dos inserciones van en una sola transacción: si una falla, no
 // queremos una nota guardada sin su rastro en ActivityLog (o viceversa).
+//
+// Hito 7 (ajuste) — máquina de estados, misma regla que en items-update.ts:
+//   - Si el item ya está Cancelado/Finalizado, se rechaza (nada se toca).
+//   - Si el item sigue "Pendiente", agregar una nota lo pasa a "En
+//     progreso" (una nota es evidencia de que alguien ya le está dando
+//     seguimiento). Si el item ya estaba en cualquier otro estado
+//     (En progreso, Bloqueado) se deja como está — una nota no debe
+//     desbloquear un item bloqueado solo.
+// El estado final del item viaja en la respuesta (estado_item) para que el
+// frontend lo refleje sin tener que volver a pedir el detalle completo.
 
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import sql from "mssql";
@@ -18,6 +28,7 @@ import { getPool } from "../db";
 import { obtenerUsuario } from "../auth";
 
 const COMENTARIO_MAX = 500;
+const ESTADOS_TERMINALES = ["Cancelado", "Finalizado"];
 
 export async function notasAdd(
   request: HttpRequest,
@@ -62,13 +73,22 @@ export async function notasAdd(
     const itemResultado = await transaction
       .request()
       .input("codigo", sql.VarChar(20), codigo)
-      .query(`SELECT id FROM Items WHERE codigo_item = @codigo`);
+      .query(`SELECT id, estado FROM Items WHERE codigo_item = @codigo`);
 
     if (itemResultado.recordset.length === 0) {
       await transaction.rollback();
       return { status: 404, jsonBody: { error: `No existe el item ${codigo}` } };
     }
     const itemId = itemResultado.recordset[0].id as number;
+    const estadoActual = itemResultado.recordset[0].estado as string;
+
+    if (ESTADOS_TERMINALES.includes(estadoActual)) {
+      await transaction.rollback();
+      return {
+        status: 409,
+        jsonBody: { error: `El item ${codigo} ya esta en estado '${estadoActual}' y no se puede modificar.` },
+      };
+    }
 
     const notaInsertada = await transaction
       .request()
@@ -92,9 +112,37 @@ export async function notasAdd(
         VALUES (@item_id, @usuario, @campo_cambiado, @comentario)
       `);
 
+    // Auto-transición: una nota nueva en un item que seguía "Pendiente" lo
+    // pasa a "En progreso" (misma regla, y también con su propia fila en
+    // ActivityLog, que la de fecha_compromiso en items-update.ts).
+    let estadoFinal = estadoActual;
+    if (estadoActual === "Pendiente") {
+      estadoFinal = "En progreso";
+      await transaction
+        .request()
+        .input("id", sql.Int, itemId)
+        .input("estado", sql.VarChar(20), estadoFinal)
+        .query(`UPDATE Items SET estado = @estado WHERE id = @id`);
+
+      await transaction
+        .request()
+        .input("item_id", sql.Int, itemId)
+        .input("usuario", sql.VarChar(100), usuario)
+        .input("campo_cambiado", sql.VarChar(100), "estado")
+        .input("valor_anterior", sql.NVarChar(sql.MAX), "Pendiente")
+        .input("valor_nuevo", sql.NVarChar(sql.MAX), estadoFinal)
+        .query(`
+          INSERT INTO ActivityLog (item_id, usuario, campo_cambiado, valor_anterior, valor_nuevo)
+          VALUES (@item_id, @usuario, @campo_cambiado, @valor_anterior, @valor_nuevo)
+        `);
+    }
+
     await transaction.commit();
 
-    return { status: 201, jsonBody: notaInsertada.recordset[0] };
+    return {
+      status: 201,
+      jsonBody: { ...notaInsertada.recordset[0], estado_item: estadoFinal },
+    };
   } catch (error) {
     await transaction.rollback();
     throw error;

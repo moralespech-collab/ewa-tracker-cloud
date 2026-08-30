@@ -11,6 +11,16 @@
 // que se sobreescribía aquí; ahora vive en su propia tabla (NotasSeguimiento)
 // con su propio endpoint (notas-list.ts / notas-add.ts), porque dejó de ser
 // "un campo del item" para ser una bitácora de muchas notas por item.
+//
+// Hito 7 (ajuste): máquina de estados. Reglas, en las palabras de Javi:
+//   - Una vez que un item sale de "Pendiente", nunca puede volver ahí.
+//   - "Cancelado" y "Finalizado" son terminales: el item ya no se puede
+//     modificar en absoluto (ni estado, ni responsable, ni fecha, ni notas).
+//   - Poner fecha de compromiso a un item que sigue "Pendiente" lo pasa
+//     solo a "En progreso" (aunque no tenga responsable todavía) — la misma
+//     regla que ya existía para agregar una nota (ver notas-add.ts).
+// Todo lo demás (Pendiente -> cualquiera, En progreso <-> Bloqueado, etc.)
+// es libre.
 
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import sql from "mssql";
@@ -18,6 +28,7 @@ import { getPool } from "../db";
 import { obtenerUsuario } from "../auth";
 
 const ESTADOS_VALIDOS = ["Pendiente", "En progreso", "Finalizado", "Bloqueado", "Cancelado"];
+const ESTADOS_TERMINALES = ["Cancelado", "Finalizado"];
 
 // Whitelist a propósito: nunca se arma SQL con nombres de columna que vengan
 // del body de la petición, solo con estos tres, elegidos a mano.
@@ -91,6 +102,16 @@ export async function itemsUpdate(
     const itemActual = actual.recordset[0];
     const itemId = itemActual.id as number;
 
+    // Cancelado/Finalizado son terminales: se rechaza el PATCH completo,
+    // no solo el cambio de estado — un item terminado no se toca en nada.
+    if (ESTADOS_TERMINALES.includes(itemActual.estado)) {
+      await transaction.rollback();
+      return {
+        status: 409,
+        jsonBody: { error: `El item ${codigo} ya esta en estado '${itemActual.estado}' y no se puede modificar.` },
+      };
+    }
+
     const setClauses: string[] = [];
     const updateRequest = transaction.request().input("id", sql.Int, itemId);
     const cambiosReales: { campo: CampoEditable; anterior: unknown; nuevo: unknown }[] = [];
@@ -107,6 +128,19 @@ export async function itemsUpdate(
 
       if (nuevoValor === valorActualComparable) continue; // sin cambio real, no genera log ni UPDATE
 
+      // Una vez que un item sale de "Pendiente" ya no puede volver — si
+      // llegó hasta aquí es porque el valor SÍ cambia, así que el estado
+      // anterior no puede ser ya "Pendiente" (si lo fuera, nuevoValor
+      // tendría que ser distinto de "Pendiente" para pasar el filtro de
+      // arriba).
+      if (campo === "estado" && nuevoValor === "Pendiente") {
+        await transaction.rollback();
+        return {
+          status: 400,
+          jsonBody: { error: "No se puede regresar el estado a 'Pendiente' una vez que salio de ahi." },
+        };
+      }
+
       cambiosReales.push({ campo, anterior: valorActualComparable, nuevo: nuevoValor });
 
       if (campo === "estado") {
@@ -119,6 +153,19 @@ export async function itemsUpdate(
         setClauses.push("fecha_compromiso = @fecha_compromiso");
         updateRequest.input("fecha_compromiso", sql.Date, nuevoValor ? new Date(nuevoValor) : null);
       }
+    }
+
+    // Auto-transición: poner fecha de compromiso a un item que sigue
+    // Pendiente lo pasa a "En progreso", aunque nadie haya tocado el
+    // selector de Estado en este mismo guardado. Si el usuario SÍ mandó un
+    // estado distinto en el mismo PATCH, ese ya está en cambiosReales y se
+    // respeta tal cual — no se pisa con esta regla.
+    const yaTraeCambioDeEstado = cambiosReales.some((c) => c.campo === "estado");
+    const cambioDeFecha = cambiosReales.find((c) => c.campo === "fecha_compromiso");
+    if (!yaTraeCambioDeEstado && cambioDeFecha && cambioDeFecha.nuevo !== null && itemActual.estado === "Pendiente") {
+      cambiosReales.push({ campo: "estado", anterior: "Pendiente", nuevo: "En progreso" });
+      setClauses.push("estado = @estado");
+      updateRequest.input("estado", sql.VarChar(20), "En progreso");
     }
 
     if (setClauses.length === 0) {

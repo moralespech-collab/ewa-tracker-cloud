@@ -180,12 +180,13 @@
   .report-item-header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
   .report-item-header .id-cell { font-weight: 700; }
   .report-item-header .hallazgo { color: var(--text-secondary); font-size: 0.88rem; }
-  .report-changes { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
-  .report-change-row { font-size: 0.85rem; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
-  .report-change-row .campo { font-weight: 600; color: var(--text-primary); min-width: 150px; }
-  .report-change-row .valores { color: var(--text-secondary); }
-  .report-change-row .valores .old { text-decoration: line-through; color: var(--text-muted); }
-  .report-change-row .meta { color: var(--text-muted); font-size: 0.78rem; margin-left: auto; white-space: nowrap; }
+  .report-meta { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.82rem; color: var(--text-secondary); margin: 6px 0 10px; }
+  .report-meta strong { color: var(--text-primary); font-weight: 600; }
+  .report-notas { display: flex; flex-direction: column; gap: 6px; }
+  .report-nota-row { display: flex; gap: 10px; font-size: 0.85rem; }
+  .report-nota-row .fecha { color: var(--text-muted); flex: none; white-space: nowrap; }
+  .report-nota-row .texto { color: var(--text-primary); }
+  .report-sin-notas { font-size: 0.82rem; color: var(--text-muted); font-style: italic; }
 
   .controls {
     display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px;
@@ -269,6 +270,12 @@
     display: inline-flex; align-items: center; gap: 8px;
     font: inherit; font-size: 0.86rem; font-weight: 600; cursor: pointer;
     background: none; border: none; padding: 4px 0; color: var(--accent);
+  }
+  .nota-toggle:disabled { opacity: 0.5; cursor: default; }
+  .edit-field select:disabled, .edit-field input:disabled { opacity: 0.6; cursor: default; }
+  .locked-banner {
+    background: rgba(192,57,43,0.12); color: #c0392b; border: 1px solid rgba(192,57,43,0.35);
+    border-radius: 8px; padding: 8px 12px; font-size: 0.82rem; margin-bottom: 10px;
   }
   .nota-toggle .nota-plus {
     display: inline-flex; align-items: center; justify-content: center;
@@ -397,17 +404,15 @@
           </section>
 
           <section>
-            <h2 class="section-title">Informe mensual</h2>
+            <h2 class="section-title">Avance de items</h2>
             <div class="chart-card">
               <div class="report-toolbar">
-                <label for="report-mes">Mes:</label>
-                <select id="report-mes"></select>
                 <label for="report-categoria">Categor&iacute;a:</label>
                 <select id="report-categoria"><option value="">Todas</option></select>
                 <input type="search" id="report-item" placeholder="Filtrar por ID de item (ej. ABAP-01)&hellip;">
               </div>
               <div id="report-body">
-                <div class="chart-empty">Cargando informe&hellip;</div>
+                <div class="chart-empty">Cargando avance&hellip;</div>
               </div>
             </div>
           </section>
@@ -720,27 +725,19 @@
     renderActividad();
   });
 
-  // ---- Informe mensual (GET /api/activity-detail) ----
-  // A diferencia de la gráfica (que agrega por categoría), aquí cada fila de
-  // ActivityLog se muestra individual, agrupada por item — el detalle que
-  // pediste para el reporte mensual de avance. ACTIVITY_DETAIL llega sin
-  // agregar; el mes se filtra del lado del cliente con el <select>.
-  let ACTIVITY_DETAIL = [];
-
-  const CAMPO_LABEL = {
-    estado: "Estado",
-    dueno_seguimiento: "Persona responsable",
-    notas_seguimiento: "Notas de seguimiento", // valor histórico, de antes de Hito 7
-    nota_seguimiento: "Nota de seguimiento agregada",
-    fecha_compromiso: "Fecha de compromiso"
-  };
-  function truncar(s, n) {
-    return s.length > n ? s.slice(0, n) + '…' : s;
-  }
-  function formatValor(v) {
-    if (v === null || v === undefined || v === '') return '(vacío)';
-    return truncar(String(v), 140);
-  }
+  // ---- Avance de items (GET /api/notas, sobre BACKLOG ya cargado) ----
+  // Esto YA NO es un log de auditoría por mes (eso lo sigue siendo la
+  // gráfica de arriba, "Actividad por mes", que no cambió) — es una foto
+  // del estado actual de cada item que ya salió de "Pendiente": su
+  // encabezado (estado, responsable, fecha de compromiso) y la bitácora de
+  // notas que se le han ido agregando, sin mezclar las dos cosas. Depende
+  // de BACKLOG (por eso cargarAvance() se dispara desde cargarBacklog(), no
+  // de forma independiente al cargar la página como hacía cargarInforme()
+  // con ACTIVITY_DETAIL).
+  //
+  // El endpoint /api/activity-detail y su log campo-por-campo con
+  // antes/después siguen existiendo (no se borró nada del backend) — solo
+  // dejó de alimentar esta pantalla, que ahora cuenta una historia distinta.
   function formatFechaHora(iso) {
     try {
       return new Date(iso).toLocaleString('es-MX', {
@@ -750,50 +747,53 @@
       return iso;
     }
   }
+  function formatFechaCorta(fecha) {
+    // fecha_compromiso llega como columna DATE (ej. "2026-10-09T00:00:00.000Z")
+    // — construir el Date a mano con año/mes/día evita que un new Date(iso)
+    // se corra un día por zona horaria, el mismo tipo de bug silencioso que
+    // ya nos mordió con light-dark() en Hito 4.
+    try {
+      const [y, m, d] = String(fecha).slice(0, 10).split('-').map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
+    } catch {
+      return String(fecha);
+    }
+  }
 
-  async function cargarInforme() {
+  let NOTAS_POR_ITEM = {};
+
+  async function cargarAvance() {
     const body = document.getElementById('report-body');
     try {
-      const resp = await fetch('/api/activity-detail');
+      const resp = await fetch('/api/notas');
       if (!resp.ok) {
         throw new Error('El API respondió ' + resp.status);
       }
-      ACTIVITY_DETAIL = await resp.json();
-      renderInformeSelectorMes();
-      renderInforme();
+      const todasLasNotas = await resp.json();
+      NOTAS_POR_ITEM = {};
+      todasLasNotas.forEach(n => {
+        if (!NOTAS_POR_ITEM[n.codigo_item]) NOTAS_POR_ITEM[n.codigo_item] = [];
+        NOTAS_POR_ITEM[n.codigo_item].push(n);
+      });
+      renderAvanceFiltros();
+      renderAvance();
     } catch (err) {
       body.innerHTML = '';
       const div = document.createElement('div');
       div.className = 'chart-empty';
-      div.textContent = 'No se pudo cargar el informe (' + err.message + ').';
+      div.textContent = 'No se pudo cargar el avance (' + err.message + ').';
       body.appendChild(div);
     }
   }
 
-  function renderInformeSelectorMes() {
-    const select = document.getElementById('report-mes');
-    const meses = [...new Set(ACTIVITY_DETAIL.map(d => d.mes))].sort().reverse();
-    const actual = select.value;
-    select.innerHTML = '';
-    if (meses.length === 0) {
-      select.style.display = 'none';
-      return;
-    }
-    select.style.display = '';
-    meses.forEach(mes => {
-      const opt = document.createElement('option');
-      opt.value = mes;
-      opt.textContent = formatMes(mes);
-      select.appendChild(opt);
-    });
-    select.value = meses.includes(actual) ? actual : meses[0];
-
-    // Selector de categoría: mismo criterio que en los filtros del backlog —
-    // solo las categorías que de verdad aparecen en el informe, en el orden
-    // fijo del proyecto (CATEGORY_ORDER), preservando la selección actual.
+  function renderAvanceFiltros() {
+    // Mismo criterio que en los demás filtros del proyecto: solo las
+    // categorías que de verdad tienen algún item fuera de "Pendiente", en
+    // el orden fijo (CATEGORY_ORDER), preservando la selección actual.
     const selectCat = document.getElementById('report-categoria');
     const catActual = selectCat.value;
-    const categoriasPresentes = CATEGORY_ORDER.filter(c => ACTIVITY_DETAIL.some(d => d.categoria === c));
+    const activos = BACKLOG.filter(d => d.estado !== 'Pendiente');
+    const categoriasPresentes = CATEGORY_ORDER.filter(c => activos.some(d => d.categoria === c));
     selectCat.innerHTML = '<option value="">Todas</option>';
     categoriasPresentes.forEach(c => {
       const opt = document.createElement('option');
@@ -804,97 +804,90 @@
     selectCat.value = categoriasPresentes.includes(catActual) ? catActual : '';
   }
 
-  function renderInforme() {
+  function renderAvance() {
     const body = document.getElementById('report-body');
-    const select = document.getElementById('report-mes');
     body.innerHTML = '';
 
-    if (ACTIVITY_DETAIL.length === 0) {
+    const activos = BACKLOG.filter(d => d.estado !== 'Pendiente');
+
+    if (activos.length === 0) {
       const div = document.createElement('div');
       div.className = 'chart-empty';
-      div.textContent = 'Todavía no hay actividad registrada — en cuanto se edite un item, aquí aparecerá el informe mensual.';
+      div.textContent = 'Todavía no hay items fuera de "Pendiente" — en cuanto uno cambie de estado, aparecerá aquí.';
       body.appendChild(div);
       return;
     }
 
-    const mesSeleccionado = select.value;
     const categoriaSeleccionada = document.getElementById('report-categoria').value;
     const itemBuscado = document.getElementById('report-item').value.trim().toLowerCase();
 
-    const filas = ACTIVITY_DETAIL.filter(d =>
-      d.mes === mesSeleccionado &&
+    const filtrados = activos.filter(d =>
       (categoriaSeleccionada === '' || d.categoria === categoriaSeleccionada) &&
       (itemBuscado === '' || d.codigo_item.toLowerCase().includes(itemBuscado))
     );
 
-    if (filas.length === 0) {
+    if (filtrados.length === 0) {
       const div = document.createElement('div');
       div.className = 'chart-empty';
-      div.textContent = 'Sin actividad en ' + formatMes(mesSeleccionado) + ' con esos filtros.';
+      div.textContent = 'Ningún item en seguimiento coincide con esos filtros.';
       body.appendChild(div);
       return;
     }
 
-    // Agrupa por item, preservando el orden en que llegan (el API ya las
-    // ordena por codigo_item y fecha_hora) — solo aparecen los items que
-    // tuvieron actividad ese mes, como pediste.
-    const porItem = [];
-    const indice = {};
-    filas.forEach(f => {
-      if (!(f.codigo_item in indice)) {
-        indice[f.codigo_item] = porItem.length;
-        porItem.push({ codigo_item: f.codigo_item, categoria: f.categoria, hallazgo: f.hallazgo, cambios: [] });
-      }
-      porItem[indice[f.codigo_item]].cambios.push(f);
-    });
+    filtrados.forEach(item => {
+      const codigo = item.codigo_item;
+      const notas = NOTAS_POR_ITEM[codigo] || [];
 
-    porItem.forEach(item => {
       const div = document.createElement('div');
       div.className = 'report-item';
 
+      // Cabecera: identidad del item + su estado actual — nada de
+      // antes/después aquí, es una foto del presente, no un historial.
       const header = document.createElement('div');
       header.className = 'report-item-header';
       header.innerHTML =
         '<span class="cat-dot" style="background: ' + catColorResolved(item.categoria) + ';"></span>' +
         '<span class="id-cell"></span>' +
-        '<span class="hallazgo"></span>';
-      header.querySelector('.id-cell').textContent = item.codigo_item;
+        '<span class="hallazgo"></span>' +
+        '<span class="status-badge"><span class="dot"></span><span class="estado-text"></span></span>';
+      header.querySelector('.id-cell').textContent = codigo;
       header.querySelector('.hallazgo').textContent = item.hallazgo;
+      header.querySelector('.dot').style.background = estadoColor(item.estado);
+      header.querySelector('.estado-text').textContent = item.estado;
       div.appendChild(header);
 
-      const lista = document.createElement('div');
-      lista.className = 'report-changes';
-      item.cambios.forEach(c => {
-        const row = document.createElement('div');
-        row.className = 'report-change-row';
-        // Una nota de seguimiento nueva no tiene "antes → después" — es
-        // texto agregado, no un campo que cambió — así que se muestra el
-        // comentario completo en vez de las flechas old → new.
-        if (c.campo_cambiado === 'nota_seguimiento') {
-          row.innerHTML = '<span class="campo"></span><span class="valores nota-valor"></span><span class="meta"></span>';
-          row.querySelector('.campo').textContent = (CAMPO_LABEL[c.campo_cambiado] || c.campo_cambiado) + ':';
-          row.querySelector('.nota-valor').textContent = formatValor(c.comentario);
-        } else {
-          row.innerHTML =
-            '<span class="campo"></span>' +
-            '<span class="valores"><span class="old"></span> &rarr; <span class="new"></span></span>' +
-            '<span class="meta"></span>';
-          row.querySelector('.campo').textContent = (CAMPO_LABEL[c.campo_cambiado] || c.campo_cambiado) + ':';
-          row.querySelector('.old').textContent = formatValor(c.valor_anterior);
-          row.querySelector('.new').textContent = formatValor(c.valor_nuevo);
-        }
-        row.querySelector('.meta').textContent = c.usuario + ' · ' + formatFechaHora(c.fecha_hora);
-        lista.appendChild(row);
-      });
-      div.appendChild(lista);
+      const meta = document.createElement('div');
+      meta.className = 'report-meta';
+      meta.innerHTML =
+        '<span><strong>Responsable:</strong> ' + escapeHtml(item.dueno_seguimiento || '(sin asignar)') + '</span>' +
+        '<span><strong>Fecha de compromiso:</strong> ' + (item.fecha_compromiso ? escapeHtml(formatFechaCorta(item.fecha_compromiso)) : '(sin definir)') + '</span>';
+      div.appendChild(meta);
+
+      // Segunda parte, separada visualmente de la cabecera: la bitácora de
+      // notas — una línea por nota, con su fecha, sin decir quién la
+      // escribió (no importa aquí, según pediste).
+      const notasDiv = document.createElement('div');
+      notasDiv.className = 'report-notas';
+      if (notas.length === 0) {
+        notasDiv.innerHTML = '<div class="report-sin-notas">Todavía no tiene notas de seguimiento.</div>';
+      } else {
+        notas.forEach(n => {
+          const row = document.createElement('div');
+          row.className = 'report-nota-row';
+          row.innerHTML = '<span class="fecha"></span><span class="texto"></span>';
+          row.querySelector('.fecha').textContent = formatFechaHora(n.fecha);
+          row.querySelector('.texto').textContent = n.comentario;
+          notasDiv.appendChild(row);
+        });
+      }
+      div.appendChild(notasDiv);
 
       body.appendChild(div);
     });
   }
 
-  document.getElementById('report-mes').addEventListener('change', renderInforme);
-  document.getElementById('report-categoria').addEventListener('change', renderInforme);
-  document.getElementById('report-item').addEventListener('input', renderInforme);
+  document.getElementById('report-categoria').addEventListener('change', renderAvance);
+  document.getElementById('report-item').addEventListener('input', renderAvance);
 
   // BACKLOG se llena con GET /api/items al cargar la página. DETAIL_CACHE
   // guarda el detalle completo (evidencia, actividad propuesta, etc.) de
@@ -924,6 +917,10 @@
       renderPanorama();
       renderFiltros();
       render();
+      // El avance de items depende de BACKLOG (necesita el estado actual de
+      // cada item) — por eso se dispara desde aquí y no en paralelo con las
+      // demás cargas iniciales, a diferencia de cargarActividad().
+      cargarAvance();
     } catch (err) {
       loadState.textContent = 'No se pudo cargar el backlog (' + err.message + '). Recarga la página para reintentar — si la base de datos estaba dormida, el primer intento a veces falla y el siguiente funciona.';
       loadState.classList.add('error');
@@ -1097,6 +1094,15 @@
       ).join('');
     }
 
+    // Máquina de estados (Hito 7): Cancelado/Finalizado son terminales — el
+    // item queda de solo lectura, tanto aquí como del lado del servidor
+    // (items-update.ts y notas-add.ts rechazan cualquier intento). Y una
+    // vez que el item salió de "Pendiente" ya no puede volver, así que esa
+    // opción se quita del <select> en cuanto deja de ser el valor actual.
+    const bloqueadoPermanente = d.estado === 'Cancelado' || d.estado === 'Finalizado';
+    const disabledAttr = bloqueadoPermanente ? ' disabled' : '';
+    const opcionesEstado = d.estado === 'Pendiente' ? ESTADO_ORDER : ESTADO_ORDER.filter(e => e !== 'Pendiente');
+
     td.innerHTML =
       '<div class="detail-grid">' +
         '<div class="detail-block"><h4>Evidencia (EWA)</h4><p>' + escapeHtml(d.evidencia) + '</p></div>' +
@@ -1109,25 +1115,28 @@
       '</div>' +
       '<div class="edit-form">' +
         '<h4>Actualizar seguimiento</h4>' +
+        (bloqueadoPermanente
+          ? '<div class="locked-banner">Este item ya está ' + escapeHtml(d.estado) + ' y no se puede modificar.</div>'
+          : '') +
         '<div class="edit-grid">' +
           '<div class="edit-field">' +
             '<label for="responsable-' + codigo + '">Persona responsable</label>' +
-            '<input type="text" id="responsable-' + codigo + '" placeholder="Nombre de quien le da seguimiento" value="' + escapeHtml(d.dueno_seguimiento || '') + '">' +
+            '<input type="text" id="responsable-' + codigo + '"' + disabledAttr + ' placeholder="Nombre de quien le da seguimiento" value="' + escapeHtml(d.dueno_seguimiento || '') + '">' +
           '</div>' +
           '<div class="edit-field">' +
             '<label for="estado-' + codigo + '">Estado</label>' +
-            '<select id="estado-' + codigo + '">' +
-              ESTADO_ORDER.map(e => '<option value="' + e + '"' + (e === d.estado ? ' selected' : '') + '>' + e + '</option>').join('') +
+            '<select id="estado-' + codigo + '"' + disabledAttr + '>' +
+              opcionesEstado.map(e => '<option value="' + e + '"' + (e === d.estado ? ' selected' : '') + '>' + e + '</option>').join('') +
             '</select>' +
           '</div>' +
           '<div class="edit-field">' +
             '<label for="fecha-' + codigo + '">Fecha de compromiso</label>' +
-            '<input type="date" id="fecha-' + codigo + '" value="' + (d.fecha_compromiso ? d.fecha_compromiso.slice(0,10) : '') + '">' +
+            '<input type="date" id="fecha-' + codigo + '"' + disabledAttr + ' value="' + (d.fecha_compromiso ? d.fecha_compromiso.slice(0,10) : '') + '">' +
           '</div>' +
           '<div class="edit-field nota-field" style="grid-column: 1 / -1;">' +
             '<label>Notas de seguimiento</label>' +
             '<div class="nota-list" id="nota-list-' + codigo + '">' + notasHtml + '</div>' +
-            '<button type="button" class="nota-toggle" id="nota-toggle-' + codigo + '">' +
+            '<button type="button" class="nota-toggle" id="nota-toggle-' + codigo + '"' + disabledAttr + '>' +
               '<span class="nota-plus">+</span> Agregar nueva nota de seguimiento' +
             '</button>' +
             '<div class="nota-add" id="nota-add-' + codigo + '" style="display:none;">' +
@@ -1139,7 +1148,7 @@
             '</div>' +
           '</div>' +
           '<div class="edit-actions">' +
-            '<button class="save-btn" type="button" id="save-' + codigo + '">Guardar cambios</button>' +
+            '<button class="save-btn" type="button" id="save-' + codigo + '"' + disabledAttr + '>Guardar cambios</button>' +
             '<span class="save-status" id="status-' + codigo + '"></span>' +
           '</div>' +
         '</div>' +
@@ -1159,7 +1168,7 @@
       notaToggle.style.display = 'none';
       document.getElementById('nota-texto-' + cssEscape(codigo)).focus();
     });
-    td.querySelector('#nota-save-' + cssEscape(codigo)).addEventListener('click', () => agregarNota(codigo, detail));
+    td.querySelector('#nota-save-' + cssEscape(codigo)).addEventListener('click', () => agregarNota(codigo));
   }
 
   // IDs de items pueden traer guiones (BAS-01) — querySelector con # necesita
@@ -1196,9 +1205,15 @@
   // POST /api/items/{codigo}/notas — agrega una nota nueva. A diferencia de
   // guardarCambios() (que hace PATCH sobre estado/responsable/fecha), esto
   // es un insert puro: nunca reemplaza una nota anterior. Si sale bien, la
-  // nota nueva se antepone en NOTAS_CACHE y se refresca la gráfica/informe
+  // nota nueva se antepone en NOTAS_CACHE y se refresca la gráfica/avance
   // (la nota también quedó como fila en ActivityLog).
-  async function agregarNota(codigo, detail) {
+  //
+  // Si el item seguía "Pendiente", agregar la nota lo pasó a "En progreso"
+  // del lado del servidor (ver notas-add.ts) — la respuesta trae ese estado
+  // final en estado_item, y aquí se sincroniza en DETAIL_CACHE/BACKLOG igual
+  // que guardarCambios() hace con un PATCH normal, para que el badge de
+  // estado en la tabla y el panorama queden al día sin recargar la página.
+  async function agregarNota(codigo) {
     const btn = document.getElementById('nota-save-' + cssEscape(codigo));
     const statusEl = document.getElementById('nota-status-' + cssEscape(codigo));
     const textarea = document.getElementById('nota-texto-' + cssEscape(codigo));
@@ -1226,9 +1241,22 @@
       }
       const nueva = await resp.json();
       NOTAS_CACHE[codigo] = [nueva, ...(NOTAS_CACHE[codigo] || [])];
+
+      if (nueva.estado_item) {
+        if (DETAIL_CACHE[codigo]) {
+          DETAIL_CACHE[codigo] = Object.assign({}, DETAIL_CACHE[codigo], { estado: nueva.estado_item });
+        }
+        const idxBacklog = BACKLOG.findIndex(d => d.codigo_item === codigo);
+        if (idxBacklog !== -1) {
+          BACKLOG[idxBacklog] = Object.assign({}, BACKLOG[idxBacklog], { estado: nueva.estado_item });
+        }
+      }
+
       cargarActividad();
-      cargarInforme();
-      renderDetailBody(detail, codigo);
+      cargarAvance();
+      renderPanorama();
+      renderFiltros();
+      render();
     } catch (err) {
       statusEl.textContent = 'Error: ' + err.message;
       statusEl.className = 'nota-save-status error';
@@ -1281,9 +1309,9 @@
           });
         }
         // El PATCH generó fila(s) nuevas en ActivityLog — recarga la
-        // gráfica y el informe mensual para que también queden al día.
+        // gráfica y el avance de items para que también queden al día.
         cargarActividad();
-        cargarInforme();
+        cargarAvance();
       }
 
       const mensajeOk = huboCambio ? 'Guardado ✓' : 'Sin cambios (ya tenía esos valores)';
@@ -1326,9 +1354,10 @@
     document.getElementById('nav-' + p).addEventListener('click', () => mostrarPagina(p));
   });
 
+  // cargarAvance() no va aquí: depende de BACKLOG y se dispara desde dentro
+  // de cargarBacklog() una vez que ese fetch termina (ver ahí el porqué).
   cargarBacklog();
   cargarActividad();
-  cargarInforme();
 </script>
 </body>
 </html>
