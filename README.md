@@ -30,8 +30,16 @@ de Azure/SAP BTP. Ver `../Roadmap EWA Tracker Cloud.cd` para el plan completo (F
   perder las asignaciones que venían del Excel original.
 - ✅ **Hito 9** — botón "Descargar CSV" en la vitrina: exporta el backlog (respetando los filtros
   activos) tal como se ve en pantalla, sin necesidad de un endpoint nuevo.
-- ⏭️ Próximo: por definir (candidatos: exportar "Avance de items" a documento, autorización por
-  persona responsable, ingesta de reportes EWA semanales, deduplicación de items repetidos).
+- ✅ **Hito 10** — ingesta semanal de reportes EWA: pantalla nueva "Importar EWA" donde Javi sube un
+  CSV (generado con ayuda de Claude a partir del reporte real de la semana) y la app crea los items
+  nuevos con IDs asignados por el servidor, sin sobreescribir un periodo ya importado. Incluye el
+  primer reinicio completo de la base de datos y la primera carga 100% real, no de seed.
+- ✅ **Hito 11** — `aprobador` se vuelve editable desde la vitrina (antes quedaba permanentemente en
+  `NULL`, sin forma de llenarlo).
+- ✅ **Hito 12** — `prioridad` se vuelve editable, y los encabezados de la tabla de la vitrina ahora
+  se pueden clicar para ordenar (ascendente/descendente) por cualquier columna.
+- ⏭️ Próximo: sección del EWA original en cada item, reporte mensual de backlog (altas/bajas por
+  mes) y reporte por persona — los tres pasos que definen la "versión beta" del proyecto.
 
 ## Hito 0 — IaC del esqueleto
 
@@ -958,24 +966,202 @@ se necesitó tocar el API — el CSV se arma en el navegador:
 Verificado por Javi en producción: descargó el CSV con y sin filtros activos, y confirmó que abre
 correcto en Excel.
 
-## Después de este hito
+## Hito 10 — Ingesta semanal de reportes EWA
 
-Con Hito 9 cerrado, el equipo ya tiene una fotografía exportable del backlog para trabajar la
-semana siguiente. De la lista original de 7 mejoras, quedan pendientes:
+El hito más grande hasta ahora, y el que le da sentido real a la frase "fuente única de verdad":
+hasta aquí, la base solo reflejaba una carga única (el seed de Hito 3, desde el Excel de Cuprum).
+En la operación real de Javi, un reporte EWA nuevo se descarga cada semana de `me.sap.com` — la
+app tenía que aprender a recibir esos reportes sin perder la vitrina que ya se venía construyendo.
+
+### Por qué no automatización completa
+
+La primera idea — parsear el reporte EWA automáticamente y decidir por sí sola qué es nuevo — se
+descartó por decisión explícita de Javi: *"esa ingesta creo que nos va a dar dolor de cabeza, no
+veo cómo podamos solucionarlo... lo más simple sería subir cada EWA semanal por separado, pero no
+sería una solución elegante."* El problema de fondo, confirmado con un análisis comparando dos
+reportes EWA reales de periodos muy distintos (mayo y agosto 2026): **SAP no asigna un ID estable
+a la mayoría de las alertas de un EWA.** Solo los números de SAP Note en las tablas de "efectos
+colaterales" (par Causing Note / Solving Note) son identificadores confiables entre periodos; todo
+lo demás — la mayoría del reporte — solo se puede comparar por texto normalizado, con el riesgo de
+falsos positivos/negativos que eso trae. Automatizar esa comparación con confianza total no era
+realista todavía.
+
+### El flujo que sí quedó construido
+
+En vez de eso, Javi propuso un proceso asistido, con un humano (él) y un LLM (Claude) haciendo la
+parte de juicio, y la app haciendo solo la parte mecánica:
+
+1. Cada semana, Javi comparte el reporte EWA nuevo (Word/WordML) junto con un export del backlog
+   actual — con exactamente las mismas columnas que espera el import (ver más abajo).
+2. Claude decide, a mano, cuáles hallazgos son genuinamente nuevos y arma un CSV con ellos —
+   `categoria, hallazgo, evidencia, actividad_propuesta, prioridad`.
+3. Javi sube ese CSV en la nueva pantalla **"Importar EWA"** (su propia entrada en el panel de
+   navegación, separada de la Vitrina).
+4. El servidor asigna los IDs y crea los items — nunca el CSV ni el cliente.
+
+### Decisiones de diseño, resueltas antes de construir
+
+- **Los campos que vienen del EWA se quedan de solo lectura después del import** —
+  `categoria`, `hallazgo`, `evidencia`, `actividad_propuesta` y `prioridad` (Hito 12 reabrió
+  después, a propósito, solo `prioridad` — ver abajo). Se le preguntó a Javi si convenía dejarlos
+  editables para poder corregir un error de Claude sin tocar SQL; su respuesta, explícita:
+  *"Dejarlo de solo lectura, corregir con SQL cuando pase."* Esta decisión no se revisita salvo que
+  él lo pida de nuevo.
+- **Prefijo de `codigo_item` por categoría**, definido por Javi: Basis → `BAS`, ABAP/Desarrollo →
+  `ABAP`, Seguridad → `SEC`, Funcional → `FUN`, Arquitectura → `ARQ`, Integraciones/UX → `INT`.
+- **Un periodo (mismo sistema + mismas fechas) solo se puede importar una vez.** La primera versión
+  no tenía ninguna protección — Javi la encontró y la señaló: *"todavía se puede subir repetidamente
+  el mismo archivo y va generando nuevos EWAs aunque sean del mismo periodo."* Se evaluó una
+  detección de duplicados más fina (comparar contenido item por item) pero Javi pidió, en su
+  siguiente mensaje, la versión simple: *"ponle una restricción como que si ese periodo ya está
+  arriba no sobreescriba, algo simple."* Quedó como **rechazar todo el import si el periodo ya
+  existe** (409, sin tocar la base) — no hay combinar-o-agregar; una corrección a un periodo ya
+  importado se hace por SQL, igual que los campos de solo lectura.
+- **"¿Desde cuándo apareció este item?" no necesitó una tabla ni columna nueva.** `Items.ewa_id`
+  apunta a `EWAs`, que ya guarda `fecha_carga`/`fecha_desde`/`fecha_hasta` desde el Hito 3 — solo
+  que hasta ahora los 48 items originales apuntaban todos al mismo `EWA-01`, así que nunca se había
+  ejercitado esa relación con datos reales.
+
+### `POST /api/items/import`
+
+Dentro de una sola transacción: valida el body completo antes de tocar la base (sistema, fechas,
+arreglo de items con `categoria`/`prioridad` contra las listas válidas) → busca el `Sistema` →
+revisa si ya existe un `EWA` con el mismo `sistema_id` + `fecha_desde` + `fecha_hasta` (si existe,
+`rollback` y 409) → inserta el `EWA` nuevo (`codigo_ewa` = siguiente `EWA-NN`, calculado leyendo el
+máximo código existente, no por `IDENTITY`, para poder reiniciar la tabla sin perder el
+consecutivo) → por cada fila, calcula el siguiente `codigo_item` para su prefijo y lo inserta con
+`estado = 'Pendiente'` (el default de la tabla) → una fila en `ActivityLog` por cada item creado →
+`commit`.
+
+### La pantalla "Importar EWA"
+
+Se movió a su propia entrada del panel de navegación (antes iba a vivir dentro de la Vitrina) y
+quedó con dos partes:
+
+- **"Backlog actual (formato de import)"** — un botón que descarga el backlog completo tal como
+  está hoy, con exactamente las 5 columnas que el import espera. Javi lo pidió explícitamente para
+  no tener que armarlo a mano desde la Vitrina cada semana: *"que no tenga que hacerlo yo manual
+  desde la vitrina sino desde la misma sección del import."* (La primera versión de este botón fue
+  un csv "plantilla/dummy" con datos de ejemplo — a medio construir, Javi interrumpió con "detente,
+  no sigas" y aclaró que quería el backlog real, no una plantilla; se descartó lo ya construido y
+  se hizo lo que pedía.) Usa un endpoint nuevo, `GET /api/items-export` — `items-list.ts` deja
+  fuera `evidencia`/`actividad_propuesta` a propósito desde el Hito 4 para no cargar textos largos
+  en cada vista de la vitrina, así que hizo falta un endpoint aparte que sí los traiga.
+- **"Importar items nuevos"** — el formulario de sistema, fechas y archivo CSV.
+
+### Bug de producción: la ruta `items/export` chocaba con `items/{codigo}`
+
+Ya en producción, el botón de descargar el backlog actual regresaba 404. La causa no era el código
+nuevo: Azure Functions estaba resolviendo `GET /api/items/export` contra la ruta ya existente
+`GET /api/items/{codigo}` (`items-detail.ts`), tratando `"export"` como si fuera un `codigo_item` —
+y esa función, al no encontrar el item `"export"`, regresaba su propio 404 antes de que la función
+nueva llegara a ejecutarse. Una ruta anidada de dos segmentos (`items/{codigo}/notas`, del Hito 7)
+convive bien con `items/{codigo}`; una de un solo segmento bajo el mismo verbo GET, no. La solución
+fue sacar la ruta del namespace `items/` por completo — se renombró a `items-export` (con guion) en
+el backend y en el `fetch()` del frontend, con un comentario explicando el porqué para que no se
+repita el mismo error en una ruta futura.
+
+### Reinicio completo de la base y primera carga real
+
+Con el flujo de import ya probado (un CSV de 5 items de prueba, con contenido inventado pero
+realista, que se subió y se borró por SQL sin dejar rastro), Javi pidió empezar de cero: *"ayúdame
+a borrar todo lo que está en la bd, vamos a hacer una instalación limpia... y la alimento de 0 con
+el EWA de esta semana que acabo de descargar."* Antes de correr el `DELETE`, se confirmó por
+`AskUserQuestion` en dos ejes — sí, bajar un respaldo primero (backlog actual + CSV de la vitrina),
+y solo borrar `Items`/`NotasSeguimiento`/`ActivityLog`/`EWAs`, dejando `Sistemas` intacto (el import
+lo necesita, y no había razón para recrearlo a mano). `db/reset-limpio.sql` quedó documentado con
+esa decisión y el orden de borrado correcto (hijas antes que padres, por las llaves foráneas).
+Confirmado por Javi en producción: *"listo, quedó todo borrado"* y *"bueno ps4 aparece"* (Sistemas
+sí sobrevivió).
+
+La primera carga real fue el reporte EWA del 17 al 23 de agosto de 2026 (confirmado en el
+encabezado del propio reporte, no asumido) — 24 hallazgos extraídos con evidencia concreta de cada
+sección del reporte (paquetes de soporte de S4CORE, aplicaciones obsoletas, autorizaciones
+críticas, notas de efectos colaterales pendientes en TM/EWM/PP&PM/Finanzas/Cross-App/Industry
+Solutions, integridad de periodo, dumps de ABAP, memoria y dumps de HANA, comunicación interna sin
+proteger, performance del Fiori Launchpad), consolidando en un solo hallazgo las tablas que traían
+varias filas relacionadas en vez de crear un item por cada fila suelta.
+
+## Hito 11 — Aprobador editable
+
+Ajuste chico, mismo patrón de detección que el Hito 8: revisando la vitrina después del reinicio de
+base, Javi notó que **`aprobador` se mostraba en el detalle del item pero no había forma de
+editarlo** — venía de solo lectura desde el Excel original del Hito 3, y desde que la base se
+alimenta por CSV (Hito 10) ese campo nunca se llena, así que todo item nuevo queda con `aprobador`
+en `NULL` sin ningún camino para cambiarlo.
+
+La solución fue literal, no conceptual: `aprobador` se agregó al *whitelist* de campos editables de
+`items-update.ts`, con el mismo tratamiento que ya tenía `dueno_seguimiento` — texto libre,
+`NULL` permitido, bloqueado si el item ya está en un estado terminal (la máquina de estados del
+Hito 7 ya cubre esto sin cambios). En la vitrina, el `<span>` de solo lectura se convirtió en un
+campo de texto dentro del formulario "Actualizar seguimiento", junto a "Persona responsable".
+
+## Hito 12 — Prioridad editable + ordenar columnas en la vitrina
+
+Javi definió qué significa para él una "versión beta" del proyecto, y de esa lista dos cambios eran
+chicos y de bajo riesgo — se resolvieron juntos, antes de entrar a los reportes (la parte más
+grande de la lista).
+
+### Prioridad editable
+
+Mismo patrón que `aprobador`, con una diferencia real: `prioridad` es `NOT NULL` en la tabla (tiene
+`CHECK (prioridad IN ('Alta', 'Media', 'Baja'))` desde el Hito 3), así que a diferencia de
+`dueno_seguimiento`/`aprobador` no se puede "vaciar" — solo cambiar entre los tres valores válidos,
+validado en `items-update.ts` igual que ya se valida `estado`. Es la única excepción a la decisión
+del Hito 10 de dejar `categoria`/`hallazgo`/`evidencia`/`actividad_propuesta`/`prioridad` de solo
+lectura: Javi pidió reabrir específicamente `prioridad`, porque en la práctica la severidad de un
+hallazgo cambia con el tiempo y no tiene caso pedir una corrección por SQL para eso — los otros
+cuatro campos se quedan como estaban.
+
+### Ordenar la vitrina con click en el encabezado
+
+Cada encabezado de la tabla (ID, Categoría, Hallazgo, Prioridad, Estado) es clicable: un click
+ordena ascendente, un segundo click en el mismo encabezado invierte a descendente, con una flecha
+que marca cuál columna y en qué dirección. ID/Categoría/Hallazgo se ordenan alfabéticamente
+(`localeCompare` con acentos); Prioridad y Estado **no** — se ordenan por el mismo rango de
+severidad/avance que ya usa el resto de la vitrina (`PRIORITY_ORDER`/`ESTADO_ORDER`: Alta antes que
+Media antes que Baja; Pendiente antes que Cancelado), para que "ascendente" signifique algo real y
+no solo el orden del alfabeto. Sin ningún click, se respeta el orden que ya trae `GET /api/items`
+(prioridad, luego `codigo_item`) — no cambió el comportamiento por defecto. Efecto colateral útil:
+el botón "Descargar CSV" del Hito 9 exporta `FILTERED_ACTUAL`, que ahora refleja el orden elegido,
+así que el CSV también sale ordenado como se ve en pantalla.
+
+## Qué significa "beta" para este proyecto
+
+Con Hito 12 cerrado, la app ya cubre todo el ciclo de vida de un item — llega por el EWA, se le da
+seguimiento, se documenta, se cierra — y ya la usa Javi en producción con datos reales. Pero al
+preguntarle qué le faltaba para llamarla una "versión beta" de verdad (algo en lo que Carlos también
+pueda apoyarse, no solo Javi), la respuesta fue una lista concreta, no una sensación vaga: sobre
+todo, una capa de reportes que hoy no existe. Esa lista es la que ordena el trabajo que sigue:
+
+1. **Sección del EWA original en cada item** — agregar de dónde salió cada hallazgo (el
+   título/subtítulo del reporte, ej. "Extended Warehouse Management Checks") al formato de CSV de
+   import y al detalle del item en la vitrina, para poder regresar al reporte original por más
+   contexto. Se descartó agregar también el número de página — el archivo fuente (WordML) no lo
+   marca de forma confiable, y pedirle a Javi que lo llene a mano cada semana no valía la pena.
+2. **Reporte mensual de backlog**: cuántos items había al inicio del mes, cuántos nuevos entraron,
+   cuántos se finalizaron, cuántos se cancelaron, y con cuántos se cierra — pensado para dar
+   seguimiento mes con mes al avance del equipo. Se resuelve reconstruyendo el estado histórico a
+   partir de datos que ya existen (`EWAs.fecha_carga` para las altas, `ActivityLog` con sus
+   timestamps para los cambios de estado) — no hace falta una tabla de snapshots nueva. Por ahora
+   se queda solo en pantalla, con un selector de mes; la exportación a PDF se decidió posponer
+   hasta que el reporte mismo esté bien construido, para no invertir en una librería nueva antes de
+   tener claro qué se va a imprimir.
+3. **Reporte por persona**: items asignados a cada `dueno_seguimiento`, con el conteo por estado —
+   sobre todo Pendiente/En progreso/Bloqueado, que es lo que de verdad indica si alguien está
+   atorado.
+
+Más allá de esos tres, sigue abierto el resto de la lista original:
 
 - **Exportar "Avance de items" a documento** (Word/Excel/PDF), para enviarlo sin depender de que
   alguien abra la vitrina.
-- **Autorización por persona responsable**: hoy `dueno_seguimiento` es texto libre; el siguiente
-  paso natural es ligarlo a una cuenta real de Microsoft con rol `colaborador` (empezando por
-  invitar a Carlos Sánchez como colaborador) y restringir la edición de cada item a quien lo tiene
+- **Autorización por persona responsable**: hoy `dueno_seguimiento`/`aprobador` son texto libre; el
+  siguiente paso natural es ligarlos a una cuenta real de Microsoft con rol `colaborador`
+  (empezando por invitar a Carlos Sánchez) y restringir la edición de cada item a quien lo tiene
   asignado.
-- **Ingesta semanal de reportes EWA**: hoy la base solo refleja el seed de Hito 3 (una carga
-  única); falta el formato estándar de CSV y la pantalla de carga dentro de la app. Ya hay un
-  análisis hecho comparando dos reportes EWA reales de periodos distintos (mayo y agosto 2026):
-  SAP no asigna un ID estable a cada alerta — solo los números de SAP Note (pares
-  causa/solución) son identificadores confiables entre periodos; el resto se compara por texto
-  normalizado.
-- **Detalle enriquecido de items** desde el archivo/blob del EWA original.
-- **Deduplicación de items repetidos** entre reportes semanales consecutivos.
+- **Deduplicación de items repetidos entre reportes semanales de periodos distintos** — el Hito 10
+  ya resuelve el caso de subir el mismo periodo dos veces (lo rechaza), pero comparar un hallazgo
+  del reporte de esta semana contra uno de hace tres semanas, con texto ligeramente distinto, sigue
+  siendo trabajo manual/de criterio, no algo que la app detecte sola.
 - Seguir explorando TypeScript con mini-laboratorios (tema aparte, ya conversado, para retomar
   cuando convenga).

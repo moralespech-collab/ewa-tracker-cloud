@@ -340,11 +340,10 @@
       <header class="hero">
         <div>
           <h1>EWA Tracker &middot; PS4 &middot; Cuprum</h1>
-          <p class="sub">Backlog de optimizaci&oacute;n generado a partir del EarlyWatch Alert del 24-ago-2026 &mdash; SAP S/4HANA 2022, HANA DB</p>
+          <p class="sub">Backlog de optimizaci&oacute;n construido a partir de los reportes EarlyWatch Alert &mdash; SAP S/4HANA 2022, HANA DB</p>
         </div>
         <div class="badge-row">
-          <span class="pill">Datos en vivo &middot; Hito 6</span>
-          <span class="pill" id="last-updated-pill">EWA: 24-ago-2026</span>
+          <span class="pill">Datos en vivo</span>
         </div>
       </header>
 
@@ -1233,7 +1232,9 @@
         '<div class="detail-block"><h4>Actividad propuesta</h4><p>' + escapeHtml(d.actividad_propuesta) + '</p></div>' +
       '</div>' +
       '<div class="detail-meta">' +
-        '<span><strong>EWA:</strong> ' + escapeHtml(d.codigo_ewa) + '</span>' +
+        '<span><strong>EWA fuente:</strong> ' + escapeHtml(d.codigo_ewa) +
+          ' · ' + escapeHtml(formatFechaCorta(d.fecha_desde)) +
+          ' – ' + escapeHtml(formatFechaCorta(d.fecha_hasta)) + '</span>' +
       '</div>' +
       '<div class="edit-form">' +
         '<h4>Actualizar seguimiento</h4>' +
